@@ -116,7 +116,7 @@ class _LoginScreenState extends State<LoginScreen> with SingleTickerProviderStat
         final user = data != null && data['user'] != null ? Map<String, dynamic>.from(data['user']) : null;
         if (token != null) await AuthService.saveToken(token);
         if (user != null) await AuthService.saveUser(user);
-        if (mounted) Navigator.pushReplacementNamed(context, '/roles');
+        if (mounted) Navigator.pushReplacementNamed(context, '/competitions');
       } else {
         setState(() => errorMsg = res['message'] ?? 'Login failed');
       }

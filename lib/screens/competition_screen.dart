@@ -48,6 +48,8 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
     _searchDebounce = Timer(const Duration(milliseconds: 400), () {
       _fetchCompetitions();
     });
+    // ensure UI updates for the clear icon
+    setState(() {});
   }
 
   String _filterToQueryParam(CompetitionFilter f) {
@@ -199,7 +201,8 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
       if (choice == _AuthChoice.login) {
         Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
       } else if (choice == _AuthChoice.register) {
-        Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register'});
+        // send user to role selection then register (top-right role visible)
+        Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
       }
       return;
     }
@@ -220,6 +223,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.transparent,
+      automaticallyImplyLeading: false,
       title: Row(
         children: [
           Container(
@@ -231,7 +235,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
             ),
           ),
           const SizedBox(width: 10),
-          const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800)),
+          const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
         ],
       ),
       actions: [
@@ -239,7 +243,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
           onPressed: () => Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'}),
           child: const Text('Login', style: TextStyle(color: Colors.white)),
         ),
-        const SizedBox(width: 6),
+        const SizedBox(width: 8),
         OutlinedButton(
           style: OutlinedButton.styleFrom(
             side: BorderSide(color: Colors.white.withOpacity(0.12)),
@@ -248,7 +252,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             backgroundColor: Colors.transparent,
           ),
-          onPressed: () => Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register'}),
+          onPressed: () => Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true}),
           child: const Text('Register'),
         ),
         const SizedBox(width: 12),
@@ -331,6 +335,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
                 onTap: () {
                   _searchCtrl.clear();
                   _fetchCompetitions();
+                  setState(() {});
                 },
                 child: Icon(Icons.close, color: Colors.white.withOpacity(0.6)),
               )
@@ -369,6 +374,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
       child: RefreshIndicator(
         onRefresh: () => _fetchCompetitions(forceRefresh: true),
         child: ListView.separated(
+          physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           itemCount: _competitions.length,
           separatorBuilder: (_, __) => const SizedBox(height: 12),
@@ -412,6 +418,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // Use the same page-wide gradient so there are no white blanks
       appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
       body: Container(
         decoration: const BoxDecoration(gradient: AppTheme.gradient),

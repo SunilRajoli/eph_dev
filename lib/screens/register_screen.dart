@@ -73,7 +73,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     final ok = _formKey.currentState?.validate() ?? false;
     if (!ok) return;
 
-    if (selectedRole == 'admin') {
+    final role = selectedRole ?? 'student';
+    if (role == 'admin') {
       setState(() => errorMsg = 'Admin accounts are created by invite only. Use admin magic link.');
       return;
     }
@@ -88,44 +89,84 @@ class _RegisterScreenState extends State<RegisterScreen> {
       'name': nameCtrl.text.trim(),
       'email': emailCtrl.text.trim(),
       'password': passCtrl.text,
-      'role': selectedRole ?? 'student',
+      'role': role,
     };
 
-    // Attach role-specific metadata (note: convert year/team_size to int safely)
-    if (selectedRole == 'student') {
-      payload['college'] = collegeCtrl.text.trim();
-      payload['branch'] = branchCtrl.text.trim();
+    // Role-specific fields (only attach when meaningful)
+    if (role == 'student') {
+      final college = collegeCtrl.text.trim();
+      final branch = branchCtrl.text.trim();
+      if (college.isNotEmpty) payload['college'] = college;
+      if (branch.isNotEmpty) payload['branch'] = branch;
       final parsedYear = int.tryParse(yearCtrl.text.trim());
       if (parsedYear != null) payload['year'] = parsedYear;
-    } else if (selectedRole == 'hiring') {
-      payload['company_name'] = companyCtrl.text.trim();
-      payload['company_website'] = websiteCtrl.text.trim();
+    } else if (role == 'hiring') {
+      final company = companyCtrl.text.trim();
+      final website = websiteCtrl.text.trim();
+      if (company.isNotEmpty) payload['company_name'] = company;
+      if (website.isNotEmpty) payload['company_website'] = website;
       final parsedTeam = int.tryParse(teamSizeCtrl.text.trim());
       if (parsedTeam != null) payload['team_size'] = parsedTeam;
-    } else if (selectedRole == 'investor') {
-      payload['firm_name'] = firmCtrl.text.trim();
-      payload['investment_stage'] = investStageCtrl.text.trim();
-      payload['website'] = firmWebsiteCtrl.text.trim();
+    } else if (role == 'investor') {
+      final firm = firmCtrl.text.trim();
+      final stage = investStageCtrl.text.trim();
+      final site = firmWebsiteCtrl.text.trim();
+      if (firm.isNotEmpty) payload['firm_name'] = firm;
+      if (stage.isNotEmpty) payload['investment_stage'] = stage;
+      if (site.isNotEmpty) payload['website'] = site;
     }
+
+    // Debug: print payload
+    // ignore: avoid_print
+    print('Register payload: $payload');
 
     try {
       final res = await ApiService.registerFromPayload(payload);
+
+      // Debug: print full response
+      // ignore: avoid_print
+      print('Register response: $res');
+
       if (res['success'] == true) {
         final data = res['data'] as Map<String, dynamic>?;
         final token = data != null && data['token'] != null ? data['token'] as String : null;
         final user = data != null && data['user'] != null ? Map<String, dynamic>.from(data['user']) : null;
         if (token != null) await AuthService.saveToken(token);
         if (user != null) await AuthService.saveUser(user);
-        if (mounted) Navigator.pushReplacementNamed(context, '/roles');
-      } else {
-        setState(() => errorMsg = res['message'] ?? 'Registration failed');
+        if (mounted) Navigator.pushReplacementNamed(context, '/competitions');
+        return;
       }
+
+      // Parse server-side validation errors into a friendly string
+      String friendly = '';
+      if (res['message'] != null) friendly = res['message'].toString();
+
+      final errors = res['errors'] ?? res['validation'] ?? null;
+      if (errors != null) {
+        if (errors is Map) {
+          final parts = <String>[];
+          errors.forEach((k, v) {
+            if (v is List) parts.add('$k: ${v.join(", ")}');
+            else parts.add('$k: $v');
+          });
+          friendly = parts.join('\n');
+        } else if (errors is List) {
+          friendly = errors.map((e) => e.toString()).join('\n');
+        } else {
+          friendly = errors.toString();
+        }
+      }
+
+      if (friendly.isEmpty) friendly = res.toString();
+
+      if (mounted) setState(() => errorMsg = friendly);
     } catch (e) {
-      setState(() => errorMsg = 'Network error: ${e.toString()}');
+      if (mounted) setState(() => errorMsg = 'Network error: ${e.toString()}');
     } finally {
       if (mounted) setState(() => loading = false);
     }
   }
+
 
   Widget _roleSpecificFields() {
     if (selectedRole == 'student') {

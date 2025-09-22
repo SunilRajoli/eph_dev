@@ -1,0 +1,33 @@
+name: eph_app
+description: Engineering Projects Hub
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  intl: ^0.19.0
+
+  # HTTP client for API calls
+  http: ^1.2.0
+  url_launcher: ^6.1.7
+  uni_links: ^0.5.1
+
+  # Optional (for persistent login later)
+  shared_preferences: ^2.3.2
+  flutter_secure_storage: ^9.0.0
+
+  # Cupertino icons (iOS styled icons)
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true

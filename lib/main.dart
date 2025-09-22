@@ -6,6 +6,7 @@ import 'screens/login_screen.dart';
 import 'screens/register_screen.dart';
 import 'screens/forgot_password_screen.dart';
 import 'screens/reset_password_screen.dart';
+import 'screens/competition_register_screen.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -30,6 +31,8 @@ class EPHApp extends StatelessWidget {
         '/register': (context) => const RegisterScreen(),
         '/forgot-password': (context) => const ForgotPasswordScreen(),
         '/reset-password': (context) => const ResetPasswordScreen(),
+        '/competitions/register': (context) => const CompetitionRegisterScreen(),
+        // '/competitions/:id': (ctx) => CompetitionDetailScreen(),
       },
     );
   }

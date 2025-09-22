@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:http/http.dart' as http;
+import 'auth_service.dart';
 
 class ApiService {
   static String get baseHost {
@@ -82,6 +83,35 @@ class ApiService {
     );
 
     return _parseResponse(res);
+  }
+
+  static Future<Map<String, dynamic>> registerForCompetition(Map<String, dynamic> payload) async {
+    final url = Uri.parse("$baseUrl/competitions/register");
+    final res = await http.post(
+      url,
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode(payload),
+    );
+    return jsonDecode(res.body);
+  }
+
+  static Future<Map<String, dynamic>> getCompetitions({String? filter, String? search, int page = 1, int limit = 50}) async {
+    final query = <String, String>{
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (filter != null && filter.isNotEmpty) query[filter == 'past' ? 'past' : filter] = 'true'; // backend uses upcoming/ongoing/past
+    if (search != null && search.isNotEmpty) query['search'] = search;
+
+    final uri = Uri.parse("$baseUrl/competitions").replace(queryParameters: query);
+    final token = await AuthService.getToken();
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+      if (token != null) "Authorization": "Bearer $token"
+    };
+
+    final res = await http.get(uri, headers: headers);
+    return jsonDecode(res.body);
   }
 
   // Profile requires Authorization header

@@ -133,7 +133,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
         final user = data != null && data['user'] != null ? Map<String, dynamic>.from(data['user']) : null;
         if (token != null) await AuthService.saveToken(token);
         if (user != null) await AuthService.saveUser(user);
-        if (mounted) Navigator.pushReplacementNamed(context, '/competitions');
+        if (mounted) {
+          print('Register success -> navigating to /main');
+          Navigator.pushReplacementNamed(context, '/main');
+        }
         return;
       }
 

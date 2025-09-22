@@ -2,6 +2,7 @@
 import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:http/http.dart' as http;
+import 'auth_service.dart';
 
 class ApiService {
   static String get baseHost {
@@ -95,6 +96,37 @@ class ApiService {
     return _parseResponse(res);
   }
 
+  // static Future<Map<String, dynamic>> uploadProfileImage(String token, File image) async {
+  //   final uri = Uri.parse("$baseUrl/auth/profile/photo"); // ensure backend supports this
+  //   final request = http.MultipartRequest('POST', uri);
+  //   request.headers['Authorization'] = 'Bearer $token';
+  //   request.files.add(await http.MultipartFile.fromPath('profile_pic', image.path));
+  //   try {
+  //     final streamed = await request.send();
+  //     final res = await http.Response.fromStream(streamed);
+  //     return _parseResponse(res);
+  //   } catch (e) {
+  //     return {
+  //       'success': false,
+  //       'message': 'Image upload failed: ${e.toString()}'
+  //     };
+  //   }
+  // }
+
+  static Future<Map<String, dynamic>> updateProfile(String token, Map<String, dynamic> payload) async {
+    final url = Uri.parse("$baseUrl/auth/profile");
+    final res = await http.put(
+      url,
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer $token",
+      },
+      body: jsonEncode(payload),
+    );
+    return _parseResponse(res);
+  }
+
+
   static Future<Map<String, dynamic>> getCompetitions({
     String? filter,
     String? search,
@@ -116,6 +148,35 @@ class ApiService {
       headers: {"Content-Type": "application/json"},
     );
 
+    return _parseResponse(res);
+  }
+
+  // GET /competitions/:id
+  static Future<Map<String, dynamic>> getCompetitionDetails(String competitionId) async {
+    final uri = Uri.parse("$baseUrl/competitions/$competitionId");
+    final res = await http.get(uri, headers: {"Content-Type": "application/json"});
+    return _parseResponse(res);
+  }
+
+// POST /competitions/:id/register
+// payload should include: type (individual|team), team_name, members (list of emails or user ids depending on API), abstract, etc.
+// This endpoint requires Authorization header (so we include token if present)
+  static Future<Map<String, dynamic>> registerForCompetition(String competitionId, Map<String, dynamic> payload) async {
+    final uri = Uri.parse("$baseUrl/competitions/$competitionId/register");
+    // try to include token if available
+    String? token;
+    try {
+      token = await AuthService.getToken();
+    } catch (_) {
+      token = null;
+    }
+
+    final headers = {"Content-Type": "application/json"};
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+
+    final res = await http.post(uri, headers: headers, body: jsonEncode(payload));
     return _parseResponse(res);
   }
 

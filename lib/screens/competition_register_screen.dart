@@ -1,361 +1,476 @@
-// // lib/screens/competition_register_screen.dart
-// import 'package:flutter/material.dart';
-// import 'package:flutter/services.dart';
-// import '../theme/app_theme.dart';
-// import '../widgets/custom_button.dart';
-// import '../services/api_service.dart';
-//
-// class CompetitionRegisterScreen extends StatefulWidget {
-//   const CompetitionRegisterScreen({super.key});
-//
-//   @override
-//   State<CompetitionRegisterScreen> createState() => _CompetitionRegisterScreenState();
-// }
-//
-// class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
-//   final _formKey = GlobalKey<FormState>();
-//
-//   // Basic fields
-//   String competitionId = '';
-//   String competitionTitle = '';
-//
-//   String registrationType = 'individual'; // 'individual' or 'team'
-//   final teamNameCtrl = TextEditingController();
-//   final memberEmailCtrl = TextEditingController();
-//   List<String> members = []; // list of member emails (excluding leader)
-//   final abstractCtrl = TextEditingController();
-//
-//   bool agree = false;
-//   bool loading = false;
-//   String errorMsg = '';
-//
-//   @override
-//   void didChangeDependencies() {
-//     super.didChangeDependencies();
-//     final args = ModalRoute.of(context)?.settings.arguments;
-//     if (args is Map<String, dynamic>) {
-//       competitionId = args['competitionId']?.toString() ?? '';
-//       competitionTitle = args['competitionTitle']?.toString() ?? '';
-//     }
-//   }
-//
-//   @override
-//   void dispose() {
-//     teamNameCtrl.dispose();
-//     memberEmailCtrl.dispose();
-//     abstractCtrl.dispose();
-//     super.dispose();
-//   }
-//
-//   String? _validateTeamName(String? v) {
-//     if (registrationType == 'team') {
-//       if (v == null || v.trim().isEmpty) return 'Team name is required';
-//       if (v.trim().length < 3) return 'Team name must be at least 3 characters';
-//     }
-//     return null;
-//   }
-//
-//   String? _validateMemberEmail(String? v) {
-//     if (v == null || v.trim().isEmpty) return 'Email required';
-//     final re = RegExp(r"^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$");
-//     if (!re.hasMatch(v.trim())) return 'Enter a valid email';
-//     return null;
-//   }
-//
-//   String? _validateAbstract(String? v) {
-//     if (v == null || v.trim().isEmpty) return 'Short abstract is required';
-//     if (v.trim().length < 20) return 'Abstract must be at least 20 characters';
-//     if (v.trim().length > 500) return 'Abstract cannot exceed 500 characters';
-//     return null;
-//   }
-//
-//   void _addMember() {
-//     final text = memberEmailCtrl.text.trim();
-//     final err = _validateMemberEmail(text);
-//     if (err != null) {
-//       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
-//       return;
-//     }
-//     if (members.contains(text)) {
-//       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Member already added')));
-//       return;
-//     }
-//     setState(() {
-//       members.add(text);
-//       memberEmailCtrl.clear();
-//     });
-//   }
-//
-//   void _removeMember(String email) {
-//     setState(() {
-//       members.remove(email);
-//     });
-//   }
-//
-//   Future<void> _submitRegistration() async {
-//     setState(() {
-//       errorMsg = '';
-//     });
-//
-//     // Validate form fields
-//     final isValid = _formKey.currentState?.validate() ?? false;
-//     if (!isValid) return;
-//
-//     if (!agree) {
-//       setState(() => errorMsg = 'Please agree to the terms before registering.');
-//       return;
-//     }
-//
-//     // Build payload
-//     final payload = <String, dynamic>{
-//       'competitionId': competitionId,
-//       'type': registrationType,
-//       'team_name': registrationType == 'team' ? (teamNameCtrl.text.trim()) : null,
-//       'members': registrationType == 'team' ? members : null,
-//       'abstract': abstractCtrl.text.trim(),
-//     };
-//
-//     try {
-//       setState(() => loading = true);
-//
-//       final res = await ApiService.registerForCompetition(payload);
-//       if (res['success'] == true) {
-//         // show success dialog
-//         if (!mounted) return;
-//         showDialog(
-//           context: context,
-//           builder: (_) => AlertDialog(
-//             title: const Row(children: [Icon(Icons.check_circle, color: Colors.green), SizedBox(width: 8), Text('Registered')]),
-//             content: Text(res['message'] ?? 'Registration successful.'),
-//             actions: [
-//               TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('OK')),
-//             ],
-//           ),
-//         ).then((_) {
-//           // navigate back to competitions or details
-//           Navigator.popUntil(context, ModalRoute.withName('/competitions'));
-//         });
-//       } else {
-//         setState(() => errorMsg = res['message'] ?? 'Registration failed');
-//       }
-//     } catch (e) {
-//       setState(() => errorMsg = 'Network error: ${e.toString()}');
-//     } finally {
-//       if (mounted) setState(() => loading = false);
-//     }
-//   }
-//
-//   Widget _buildHeader() {
-//     return Column(
-//       crossAxisAlignment: CrossAxisAlignment.start,
-//       children: [
-//         Text(competitionTitle.isNotEmpty ? competitionTitle : 'Competition Registration', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
-//         const SizedBox(height: 6),
-//         Text('Fill required details to submit your registration.', style: TextStyle(color: Colors.white.withOpacity(0.8))),
-//         const SizedBox(height: 12),
-//       ],
-//     );
-//   }
-//
-//   @override
-//   Widget build(BuildContext context) {
-//     final width = MediaQuery.of(context).size.width * 0.92;
-//
-//     return Scaffold(
-//       appBar: AppBar(
-//         title: const Text('Register for Competition'),
-//         leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
-//       ),
-//       body: Container(
-//         decoration: const BoxDecoration(gradient: AppTheme.gradient),
-//         width: double.infinity,
-//         height: double.infinity,
-//         child: SafeArea(
-//           child: Center(
-//             child: SingleChildScrollView(
-//               padding: const EdgeInsets.symmetric(vertical: 20),
-//               child: Container(
-//                 width: width,
-//                 padding: const EdgeInsets.all(16),
-//                 decoration: BoxDecoration(
-//                   color: Colors.white.withOpacity(0.04),
-//                   borderRadius: BorderRadius.circular(12),
-//                   border: Border.all(color: Colors.white.withOpacity(0.06)),
-//                 ),
-//                 child: Form(
-//                   key: _formKey,
-//                   child: Column(
-//                     children: [
-//                       _buildHeader(),
-//                       // Registration type toggle
-//                       Row(
-//                         children: [
-//                           Expanded(
-//                             child: ChoiceChip(
-//                               label: const Text('Individual'),
-//                               selected: registrationType == 'individual',
-//                               onSelected: (v) {
-//                                 setState(() {
-//                                   registrationType = 'individual';
-//                                   members.clear();
-//                                   teamNameCtrl.clear();
-//                                 });
-//                               },
-//                             ),
-//                           ),
-//                           const SizedBox(width: 12),
-//                           Expanded(
-//                             child: ChoiceChip(
-//                               label: const Text('Team'),
-//                               selected: registrationType == 'team',
-//                               onSelected: (v) {
-//                                 setState(() {
-//                                   registrationType = 'team';
-//                                 });
-//                               },
-//                             ),
-//                           ),
-//                         ],
-//                       ),
-//                       const SizedBox(height: 12),
-//
-//                       // Team name only if team
-//                       if (registrationType == 'team') ...[
-//                         TextFormField(
-//                           controller: teamNameCtrl,
-//                           style: const TextStyle(color: Colors.white),
-//                           validator: _validateTeamName,
-//                           decoration: InputDecoration(
-//                             hintText: 'Team name',
-//                             hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
-//                             prefixIcon: const Icon(Icons.group, color: Colors.white70),
-//                             filled: true,
-//                             fillColor: Colors.white.withOpacity(0.02),
-//                             border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-//                           ),
-//                         ),
-//                         const SizedBox(height: 10),
-//                         // members input
-//                         Row(
-//                           children: [
-//                             Expanded(
-//                               child: TextFormField(
-//                                 controller: memberEmailCtrl,
-//                                 keyboardType: TextInputType.emailAddress,
-//                                 style: const TextStyle(color: Colors.white),
-//                                 decoration: InputDecoration(
-//                                   hintText: 'Add team member email',
-//                                   hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
-//                                   prefixIcon: const Icon(Icons.email_outlined, color: Colors.white70),
-//                                   filled: true,
-//                                   fillColor: Colors.white.withOpacity(0.02),
-//                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-//                                 ),
-//                               ),
-//                             ),
-//                             const SizedBox(width: 8),
-//                             ElevatedButton(
-//                               onPressed: _addMember,
-//                               child: const Text('Add'),
-//                             )
-//                           ],
-//                         ),
-//                         const SizedBox(height: 8),
-//                         if (members.isNotEmpty)
-//                           Align(
-//                             alignment: Alignment.centerLeft,
-//                             child: Wrap(
-//                               spacing: 8,
-//                               runSpacing: 6,
-//                               children: members
-//                                   .map((m) => Chip(
-//                                 backgroundColor: Colors.white.withOpacity(0.06),
-//                                 label: Text(m, style: const TextStyle(color: Colors.white70)),
-//                                 onDeleted: () => _removeMember(m),
-//                               ))
-//                                   .toList(),
-//                             ),
-//                           ),
-//                         const SizedBox(height: 12),
-//                       ],
-//
-//                       // Abstract / short description
-//                       TextFormField(
-//                         controller: abstractCtrl,
-//                         style: const TextStyle(color: Colors.white),
-//                         validator: _validateAbstract,
-//                         maxLines: 6,
-//                         maxLength: 500,
-//                         decoration: InputDecoration(
-//                           hintText: 'Short abstract (what is your project / solution?)',
-//                           hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
-//                           alignLabelWithHint: true,
-//                           filled: true,
-//                           fillColor: Colors.white.withOpacity(0.02),
-//                           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-//                         ),
-//                       ),
-//
-//                       const SizedBox(height: 12),
-//
-//                       // Terms checkbox
-//                       Row(
-//                         children: [
-//                           Checkbox(
-//                             value: agree,
-//                             onChanged: (v) => setState(() => agree = v ?? false),
-//                           ),
-//                           Expanded(
-//                             child: Text(
-//                               'I confirm that the information is accurate and I agree to the competition rules.',
-//                               style: TextStyle(color: Colors.white.withOpacity(0.85)),
-//                             ),
-//                           )
-//                         ],
-//                       ),
-//
-//                       if (errorMsg.isNotEmpty) ...[
-//                         const SizedBox(height: 8),
-//                         Container(
-//                           width: double.infinity,
-//                           padding: const EdgeInsets.all(10),
-//                           decoration: BoxDecoration(color: Colors.red.shade800.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-//                           child: Text(errorMsg, style: const TextStyle(color: Colors.redAccent)),
-//                         ),
-//                         const SizedBox(height: 8),
-//                       ],
-//
-//                       // Buttons
-//                       Row(
-//                         children: [
-//                           Expanded(
-//                             child: CustomButton(
-//                               text: loading ? 'Submitting...' : 'Submit Registration',
-//                               onPressed: loading ? null : _submitRegistration,
-//                               enabled: !loading,
-//                             ),
-//                           ),
-//                           const SizedBox(width: 12),
-//                           Expanded(
-//                             child: OutlinedButton(
-//                               style: OutlinedButton.styleFrom(
-//                                 foregroundColor: Colors.white,
-//                                 side: BorderSide(color: Colors.white.withOpacity(0.06)),
-//                               ),
-//                               onPressed: loading ? null : () => Navigator.pop(context),
-//                               child: const Text('Cancel'),
-//                             ),
-//                           ),
-//                         ],
-//                       )
-//                     ],
-//                   ),
-//                 ),
-//               ),
-//             ),
-//           ),
-//         ),
-//       ),
-//     );
-//   }
-// }
+// lib/screens/competition_register_screen.dart
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
+import '../theme/app_theme.dart';
+import '../services/api_service.dart';
+import '../services/auth_service.dart';
+import '../widgets/custom_button.dart';
+
+enum _RegType { individual, team }
+
+class CompetitionRegisterScreen extends StatefulWidget {
+  const CompetitionRegisterScreen({super.key});
+
+  @override
+  State<CompetitionRegisterScreen> createState() => _CompetitionRegisterScreenState();
+}
+
+class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
+  bool _loading = true;
+  bool _submitting = false;
+  String? _error;
+  Map<String, dynamic>? _competition; // full details from API
+  String competitionId = '';
+  final _formKey = GlobalKey<FormState>();
+
+  // form fields
+  _RegType _type = _RegType.individual;
+  final teamNameCtrl = TextEditingController();
+  final abstractCtrl = TextEditingController();
+  final memberEmailCtrl = TextEditingController();
+  final List<String> _memberEmails = [];
+
+  // seat & team limits
+  int _maxTeamSize = 1;
+  int _seatsRemaining = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // nothing here — real init happens in didChangeDependencies so we can read args
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final args = ModalRoute.of(context)?.settings.arguments;
+    if (args is Map<String, dynamic>) {
+      final id = args['competitionId']?.toString();
+      if (id != null && id.isNotEmpty) {
+        competitionId = id;
+        _loadCompetition();
+      } else {
+        setState(() {
+          _loading = false;
+          _error = 'Invalid competition';
+        });
+      }
+    } else {
+      setState(() {
+        _loading = false;
+        _error = 'Missing competition data';
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    teamNameCtrl.dispose();
+    abstractCtrl.dispose();
+    memberEmailCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadCompetition() async {
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
+    try {
+      final res = await ApiService.getCompetitionDetails(competitionId);
+      if (res['success'] == true) {
+        final data = res['data'] as Map<String, dynamic>?;
+        final comp = data != null && data['competition'] != null ? Map<String, dynamic>.from(data['competition']) : null;
+        if (comp != null) {
+          setState(() {
+            _competition = comp;
+            _maxTeamSize = (comp['max_team_size'] ?? comp['maxTeamSize'] ?? 1) as int;
+            _seatsRemaining = (comp['seats_remaining'] ?? comp['seatsRemaining'] ?? 0) as int;
+            _loading = false;
+          });
+          return;
+        }
+      }
+      setState(() {
+        _error = res['message'] ?? 'Failed to load competition';
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Network error: ${e.toString()}';
+        _loading = false;
+      });
+    }
+  }
+
+  Future<bool> _ensureLoggedIn() async {
+    final token = await AuthService.getToken();
+    if (token != null && token.isNotEmpty) return true;
+
+    // Ask user to login/register
+    final choice = await showDialog<_AuthChoice>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return AlertDialog(
+          backgroundColor: const Color(0xFF07101A),
+          title: const Text('Login required', style: TextStyle(color: Colors.white)),
+          content: const Text('You must be logged in to register. Login or register now?', style: TextStyle(color: Colors.white70)),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel), child: const Text('Cancel')),
+            TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register), child: const Text('Register')),
+            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login), child: const Text('Login')),
+          ],
+        );
+      },
+    );
+
+    if (choice == _AuthChoice.login) {
+      await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+      final tokenAfter = await AuthService.getToken();
+      return tokenAfter != null && tokenAfter.isNotEmpty;
+    } else if (choice == _AuthChoice.register) {
+      await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+      final tokenAfter = await AuthService.getToken();
+      return tokenAfter != null && tokenAfter.isNotEmpty;
+    }
+
+    return false;
+  }
+
+  String? _validateEmailField(String? v) {
+    if (v == null || v.trim().isEmpty) return 'Email required';
+    final re = RegExp(r"^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$");
+    if (!re.hasMatch(v.trim())) return 'Enter valid email';
+    return null;
+  }
+
+  void _addMemberEmail() {
+    final email = memberEmailCtrl.text.trim();
+    final err = _validateEmailField(email);
+    if (err != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      return;
+    }
+    // check duplicates
+    if (_memberEmails.contains(email)) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Email already added')));
+      return;
+    }
+    // check against max team size (leader + members)
+    final newSize = 1 + _memberEmails.length + 1; // leader + existing + new
+    if (newSize > _maxTeamSize) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Max team size is $_maxTeamSize')));
+      return;
+    }
+
+    setState(() {
+      _memberEmails.add(email);
+      memberEmailCtrl.clear();
+    });
+  }
+
+  void _removeMemberEmail(int idx) {
+    setState(() {
+      _memberEmails.removeAt(idx);
+    });
+  }
+
+  Future<void> _submitRegistration() async {
+    final ok = _formKey.currentState?.validate() ?? false;
+    if (!ok) return;
+
+    // ensure logged in
+    final loggedIn = await _ensureLoggedIn();
+    if (!loggedIn) return;
+
+    // extra validations
+    if (_type == _RegType.team && _memberEmails.isEmpty && (teamNameCtrl.text.trim().isEmpty)) {
+      // team must have at least a team name and ideally members (but some competitions allow 1-person team)
+      // We'll allow single-member team if server supports it; still require team name.
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Team name is required for team registration')));
+      return;
+    }
+
+    // check seats
+    if (_seatsRemaining <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No seats remaining for this competition')));
+      return;
+    }
+
+    setState(() {
+      _submitting = true;
+    });
+
+    try {
+      final payload = <String, dynamic>{
+        'type': _type == _RegType.individual ? 'individual' : 'team',
+        if (_type == _RegType.team) 'team_name': teamNameCtrl.text.trim(),
+        if (_memberEmails.isNotEmpty) 'members': _memberEmails,
+        if (abstractCtrl.text.trim().isNotEmpty) 'abstract': abstractCtrl.text.trim(),
+      };
+
+      final res = await ApiService.registerForCompetition(competitionId, payload);
+      if (res['success'] == true) {
+        // optionally update UI / seats
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Registration submitted')));
+        // navigate back to competitions or to my registrations
+        if (mounted) {
+          // refresh competitions list by popping back to competitions
+          Navigator.pushNamedAndRemoveUntil(context, '/competitions', (route) => false);
+        }
+      } else {
+        final msg = res['message'] ?? 'Registration failed';
+        setState(() {
+          _error = msg;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      }
+    } catch (e) {
+      final msg = 'Network error: ${e.toString()}';
+      setState(() {
+        _error = msg;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Widget _buildHeader() {
+    final title = _competition != null ? _competition!['title']?.toString() ?? '' : 'Register';
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.arrow_back),
+          color: Colors.white,
+          onPressed: () => Navigator.pop(context),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width * 0.94;
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        title: const Text('Competition Registration'),
+        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+      ),
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppTheme.gradient),
+        child: SafeArea(
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : Padding(
+            padding: const EdgeInsets.all(14.0),
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                children: [
+                  Container(
+                    width: width,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildHeader(),
+                        const SizedBox(height: 8),
+                        if (_competition != null) ...[
+                          Text(
+                            _competition!['description']?.toString() ?? '',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              if (_competition!['start_date'] != null && _competition!['end_date'] != null)
+                                Chip(
+                                  label: Text(
+                                    '${DateFormat('d MMM').format(DateTime.parse(_competition!['start_date']))} → ${DateFormat('d MMM').format(DateTime.parse(_competition!['end_date']))}',
+                                  ),
+                                  backgroundColor: Colors.white.withOpacity(0.02),
+                                  labelStyle: const TextStyle(color: Colors.white70),
+                                ),
+                              const SizedBox(width: 8),
+                              Chip(
+                                label: Text('Seats: $_seatsRemaining'),
+                                backgroundColor: Colors.white.withOpacity(0.02),
+                                labelStyle: const TextStyle(color: Colors.white70),
+                              ),
+                              const SizedBox(width: 8),
+                              Chip(
+                                label: Text('Team limit: $_maxTeamSize'),
+                                backgroundColor: Colors.white.withOpacity(0.02),
+                                labelStyle: const TextStyle(color: Colors.white70),
+                              ),
+                            ],
+                          ),
+                        ],
+                        const SizedBox(height: 12),
+                        Form(
+                          key: _formKey,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text('Registration type', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 8),
+                              Row(
+                                children: [
+                                  ChoiceChip(
+                                    label: const Text('Individual'),
+                                    selected: _type == _RegType.individual,
+                                    onSelected: (v) => setState(() {
+                                      _type = _RegType.individual;
+                                    }),
+                                    selectedColor: Colors.white.withOpacity(0.06),
+                                    backgroundColor: Colors.white.withOpacity(0.03),
+                                    labelStyle: const TextStyle(color: Colors.white),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ChoiceChip(
+                                    label: const Text('Team'),
+                                    selected: _type == _RegType.team,
+                                    onSelected: (v) => setState(() {
+                                      _type = _RegType.team;
+                                    }),
+                                    selectedColor: Colors.white.withOpacity(0.06),
+                                    backgroundColor: Colors.white.withOpacity(0.03),
+                                    labelStyle: const TextStyle(color: Colors.white),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+
+                              // Team fields
+                              if (_type == _RegType.team) ...[
+                                TextFormField(
+                                  controller: teamNameCtrl,
+                                  style: const TextStyle(color: Colors.white),
+                                  validator: (v) {
+                                    if (_type == _RegType.team && (v == null || v.trim().length < 3)) return 'Team name (3+ chars)';
+                                    return null;
+                                  },
+                                  decoration: InputDecoration(
+                                    hintText: 'Team name',
+                                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
+                                    filled: true,
+                                    fillColor: Colors.white.withOpacity(0.02),
+                                    prefixIcon: const Icon(Icons.group, color: Colors.white70),
+                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                  ),
+                                ),
+                                const SizedBox(height: 10),
+
+                                // add member emails
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: TextFormField(
+                                        controller: memberEmailCtrl,
+                                        style: const TextStyle(color: Colors.white),
+                                        decoration: InputDecoration(
+                                          hintText: 'Add member email',
+                                          hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
+                                          filled: true,
+                                          fillColor: Colors.white.withOpacity(0.02),
+                                          prefixIcon: const Icon(Icons.email_outlined, color: Colors.white70),
+                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    ElevatedButton(
+                                      onPressed: _addMemberEmail,
+                                      child: const Text('Add'),
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.06)),
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                if (_memberEmails.isNotEmpty)
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 6,
+                                    children: List.generate(_memberEmails.length, (i) {
+                                      final e = _memberEmails[i];
+                                      return Chip(
+                                        label: Text(e, style: const TextStyle(color: Colors.white70)),
+                                        backgroundColor: Colors.white.withOpacity(0.02),
+                                        onDeleted: () => _removeMemberEmail(i),
+                                      );
+                                    }),
+                                  ),
+                                const SizedBox(height: 12),
+                              ],
+
+                              // abstract / description
+                              TextFormField(
+                                controller: abstractCtrl,
+                                minLines: 3,
+                                maxLines: 6,
+                                style: const TextStyle(color: Colors.white),
+                                decoration: InputDecoration(
+                                  hintText: 'Project abstract / summary (optional)',
+                                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
+                                  filled: true,
+                                  fillColor: Colors.white.withOpacity(0.02),
+                                  prefixIcon: const Icon(Icons.description_outlined, color: Colors.white70),
+                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+
+                              if (_error != null) ...[
+                                Container(
+                                  width: double.infinity,
+                                  padding: const EdgeInsets.all(10),
+                                  decoration: BoxDecoration(color: Colors.red.shade800.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
+                                  child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+
+                              CustomButton(
+                                text: _submitting ? 'Submitting...' : 'Submit registration',
+                                enabled: !_submitting,
+                                onPressed: _submitting ? null : _submitRegistration,
+                              ),
+                              const SizedBox(height: 8),
+
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+enum _AuthChoice { cancel, login, register }

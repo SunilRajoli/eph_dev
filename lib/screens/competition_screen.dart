@@ -15,7 +15,7 @@ class CompetitionScreen extends StatefulWidget {
   State<CompetitionScreen> createState() => _CompetitionScreenState();
 }
 
-class _CompetitionScreenState extends State<CompetitionScreen> {
+class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindingObserver {
   CompetitionFilter _activeFilter = CompetitionFilter.all;
   bool _loading = true;
   bool _refreshing = false;
@@ -29,18 +29,48 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
   int upcomingCount = 0;
   int completedCount = 0;
 
+  // Auth state
+  bool _isLoggedIn = false;
+  Map<String, dynamic>? _currentUser;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+
+    // keep fetch and auth checks separate but ensure auth is checked after first frame
     _fetchCompetitions();
+    // ensure auth check runs after first frame so secure storage is ready
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAuthStatus();
+    });
+
     _searchCtrl.addListener(_onSearchChanged);
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // also re-check auth whenever dependencies change (useful after navigation)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _checkAuthStatus();
+    });
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _searchDebounce?.cancel();
     _searchCtrl.dispose();
     super.dispose();
+  }
+
+  // Called when app is resumed (useful for deep-link / magic link flows)
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _checkAuthStatus();
+    }
   }
 
   void _onSearchChanged() {
@@ -50,6 +80,36 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
     });
     // ensure UI updates for the clear icon
     setState(() {});
+  }
+
+  Future<void> _checkAuthStatus() async {
+    try {
+      final token = await AuthService.getToken();
+      if (token != null && token.isNotEmpty) {
+        final user = await AuthService.getUser();
+        if (mounted) setState(() {
+          _isLoggedIn = true;
+          _currentUser = user;
+        });
+        return;
+      }
+      if (mounted) setState(() {
+        _isLoggedIn = false;
+        _currentUser = null;
+      });
+    } catch (_) {
+      if (mounted) setState(() {
+        _isLoggedIn = false;
+        _currentUser = null;
+      });
+    }
+  }
+
+  Future<void> _handleLogout() async {
+    await AuthService.clearToken();
+    await _checkAuthStatus();
+    await _fetchCompetitions();
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logged out')));
   }
 
   String _filterToQueryParam(CompetitionFilter f) {
@@ -66,7 +126,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
     }
   }
 
-  // Helper to map API status + dates to a canonical state
   String _computeStatus(Map<String, dynamic> c) {
     final status = (c['status'] as String?)?.toLowerCase() ?? '';
     final start = c['start_date'] != null ? DateTime.tryParse(c['start_date'].toString()) : null;
@@ -79,15 +138,11 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
       if (start != null && start.isAfter(now)) return 'upcoming';
       if (start != null && end != null && start.isBefore(now) && end.isAfter(now)) return 'ongoing';
       if (end != null && end.isBefore(now)) return 'completed';
-      // fallback
       return 'upcoming';
     }
     return status;
   }
 
-  // Fetch competitions. We do two calls:
-  //  - 1st: get all (no filter) to compute accurate counts
-  //  - 2nd: get filtered list for display (so counts remain accurate)
   Future<void> _fetchCompetitions({bool forceRefresh = false}) async {
     if (!_refreshing) {
       setState(() {
@@ -98,7 +153,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
     }
 
     try {
-      // 1) Fetch all (no filter) to compute counts
       final allRes = await ApiService.getCompetitions(filter: '', search: null);
       List<Map<String, dynamic>> allComps = [];
       if (allRes['success'] == true) {
@@ -108,7 +162,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
             : <Map<String, dynamic>>[];
       }
 
-      // compute counts from full list
       int ongoing = 0, upcoming = 0, completed = 0;
       for (final c in allComps) {
         final s = _computeStatus(c);
@@ -117,7 +170,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
         else if (s == 'completed') completed++;
       }
 
-      // 2) Fetch the list for current filter (so user sees filtered items)
       final filterParam = _filterToQueryParam(_activeFilter);
       final res = await ApiService.getCompetitions(
         filter: filterParam,
@@ -130,7 +182,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
             ? List<Map<String, dynamic>>.from(data['competitions'])
             : <Map<String, dynamic>>[];
 
-        setState(() {
+        if (mounted) setState(() {
           _competitions = comps;
           ongoingCount = ongoing;
           upcomingCount = upcoming;
@@ -139,14 +191,14 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
           _refreshing = false;
         });
       } else {
-        setState(() {
+        if (mounted) setState(() {
           _error = res['message'] ?? 'Failed to load competitions';
           _loading = false;
           _refreshing = false;
         });
       }
     } catch (e) {
-      setState(() {
+      if (mounted) setState(() {
         _error = 'Network error: ${e.toString()}';
         _loading = false;
         _refreshing = false;
@@ -199,15 +251,30 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
       );
 
       if (choice == _AuthChoice.login) {
-        Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+        // wait for login flow to complete
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+        await _checkAuthStatus();
+        final tokenAfter = await AuthService.getToken();
+        if (tokenAfter != null && tokenAfter.isNotEmpty) {
+          Navigator.pushNamed(context, '/competitions/register', arguments: {
+            'competitionId': competition['id'],
+            'competitionTitle': competition['title'],
+          });
+        }
       } else if (choice == _AuthChoice.register) {
-        // send user to role selection then register (top-right role visible)
-        Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+        await _checkAuthStatus();
+        final tokenAfter = await AuthService.getToken();
+        if (tokenAfter != null && tokenAfter.isNotEmpty) {
+          Navigator.pushNamed(context, '/competitions/register', arguments: {
+            'competitionId': competition['id'],
+            'competitionTitle': competition['title'],
+          });
+        }
       }
       return;
     }
 
-    // Token exists -> navigate to registration screen
     Navigator.pushNamed(
       context,
       '/competitions/register',
@@ -219,7 +286,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
   }
 
   Widget _topHeader() {
-    // unified header with logo + name on left, login/register on right; transparent so matches whole UI
     return AppBar(
       elevation: 0,
       backgroundColor: Colors.transparent,
@@ -238,9 +304,49 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
           const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
         ],
       ),
-      actions: [
+      actions: _isLoggedIn
+          ? [
+        Padding(
+          padding: const EdgeInsets.only(right: 8.0),
+          child: Row(
+            children: [
+              if (_currentUser != null) ...[
+                Text(
+                  (_currentUser!['name'] ?? 'User').toString(),
+                  style: const TextStyle(color: Colors.white70),
+                ),
+                const SizedBox(width: 8),
+              ],
+              PopupMenuButton<String>(
+                color: const Color(0xFF07101A),
+                onSelected: (val) async {
+                  if (val == 'logout') await _handleLogout();
+                },
+                itemBuilder: (ctx) => const [
+                  PopupMenuItem(value: 'logout', child: Text('Logout')),
+                ],
+                child: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: Colors.white.withOpacity(0.06),
+                  child: Text(
+                    _currentUser != null && _currentUser!['name'] != null && _currentUser!['name'].toString().isNotEmpty
+                        ? _currentUser!['name'].toString()[0].toUpperCase()
+                        : 'U',
+                    style: const TextStyle(color: Colors.white),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+          ),
+        ),
+      ]
+          : [
         TextButton(
-          onPressed: () => Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'}),
+          onPressed: () async {
+            await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+            await _checkAuthStatus();
+          },
           child: const Text('Login', style: TextStyle(color: Colors.white)),
         ),
         const SizedBox(width: 8),
@@ -252,7 +358,10 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             backgroundColor: Colors.transparent,
           ),
-          onPressed: () => Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true}),
+          onPressed: () async {
+            await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+            await _checkAuthStatus();
+          },
           child: const Text('Register'),
         ),
         const SizedBox(width: 12),
@@ -261,7 +370,6 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
   }
 
   Widget _filtersRow() {
-    // side-by-side filter buttons: ongoing, upcoming, completed
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       child: Row(
@@ -418,7 +526,8 @@ class _CompetitionScreenState extends State<CompetitionScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Use the same page-wide gradient so there are no white blanks
+      // Make scaffold transparent so our gradient body is visible (prevents white blanks)
+      backgroundColor: Colors.transparent,
       appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
       body: Container(
         decoration: const BoxDecoration(gradient: AppTheme.gradient),
@@ -541,7 +650,6 @@ class _CompetitionCardState extends State<_CompetitionCard> {
         padding: const EdgeInsets.all(14),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // thumbnail
             Container(
               width: 78,
               height: 78,
@@ -576,7 +684,6 @@ class _CompetitionCardState extends State<_CompetitionCard> {
           ]),
           const SizedBox(height: 12),
 
-          // ExpansionTile-like dropdown for details
           Container(
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.02),

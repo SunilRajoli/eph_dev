@@ -143,6 +143,9 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
     return status;
   }
 
+  // ---------------------------
+  // Updated _fetchCompetitions
+  // ---------------------------
   Future<void> _fetchCompetitions({bool forceRefresh = false}) async {
     if (!_refreshing) {
       setState(() {
@@ -153,6 +156,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
     }
 
     try {
+      // 1) Fetch full list (used for counting & reliable client-side filtering)
       final allRes = await ApiService.getCompetitions(filter: '', search: null);
       List<Map<String, dynamic>> allComps = [];
       if (allRes['success'] == true) {
@@ -160,8 +164,17 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
         allComps = (data != null && data['competitions'] != null)
             ? List<Map<String, dynamic>>.from(data['competitions'])
             : <Map<String, dynamic>>[];
+      } else {
+        // If main fetch failed, set error and return early
+        if (mounted) setState(() {
+          _error = allRes['message'] ?? 'Failed to load competitions';
+          _loading = false;
+          _refreshing = false;
+        });
+        return;
       }
 
+      // compute counts from the full dataset using the same client-side status logic
       int ongoing = 0, upcoming = 0, completed = 0;
       for (final c in allComps) {
         final s = _computeStatus(c);
@@ -170,33 +183,82 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
         else if (s == 'completed') completed++;
       }
 
+      // 2) Apply client-side search + filter to ensure UI matches _computeStatus
+      final searchText = _searchCtrl.text.trim();
+      List<Map<String, dynamic>> filtered = allComps;
+
+      // apply search (title, subtitle, sponsor, tags)
+      if (searchText.isNotEmpty) {
+        final q = searchText.toLowerCase();
+        filtered = filtered.where((c) {
+          final title = (c['title'] ?? '').toString().toLowerCase();
+          final subtitle = (c['subtitle'] ?? c['description'] ?? '').toString().toLowerCase();
+          final sponsor = (c['sponsor'] ?? '').toString().toLowerCase();
+          final tags = (c['tags'] as List<dynamic>?)?.map((t) => t.toString().toLowerCase()).toList() ?? <String>[];
+          return title.contains(q) || subtitle.contains(q) || sponsor.contains(q) || tags.any((t) => t.contains(q));
+        }).toList();
+      }
+
+      // apply active filter using _computeStatus
+      filtered = filtered.where((c) {
+        final s = _computeStatus(c);
+        switch (_activeFilter) {
+          case CompetitionFilter.ongoing:
+            return s == 'ongoing';
+          case CompetitionFilter.upcoming:
+            return s == 'upcoming';
+          case CompetitionFilter.completed:
+            return s == 'completed';
+          case CompetitionFilter.all:
+          default:
+            return true;
+        }
+      }).toList();
+
+      // 3) Optionally call server-filtered endpoint for freshness/pagination,
+      //    but prefer client-side if the server response looks inconsistent.
       final filterParam = _filterToQueryParam(_activeFilter);
-      final res = await ApiService.getCompetitions(
+      final serverRes = await ApiService.getCompetitions(
         filter: filterParam,
-        search: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        search: searchText.isEmpty ? null : searchText,
       );
 
-      if (res['success'] == true) {
-        final data = res['data'] as Map<String, dynamic>?;
-        final comps = (data != null && data['competitions'] != null)
+      List<Map<String, dynamic>> serverComps = [];
+      if (serverRes['success'] == true) {
+        final data = serverRes['data'] as Map<String, dynamic>?;
+        serverComps = (data != null && data['competitions'] != null)
             ? List<Map<String, dynamic>>.from(data['competitions'])
             : <Map<String, dynamic>>[];
-
-        if (mounted) setState(() {
-          _competitions = comps;
-          ongoingCount = ongoing;
-          upcomingCount = upcoming;
-          completedCount = completed;
-          _loading = false;
-          _refreshing = false;
-        });
-      } else {
-        if (mounted) setState(() {
-          _error = res['message'] ?? 'Failed to load competitions';
-          _loading = false;
-          _refreshing = false;
-        });
       }
+
+      // prefer server result only if it looks consistent with our filter
+      final useServer = serverComps.isNotEmpty &&
+          serverComps.every((c) {
+            final s = _computeStatus(c);
+            switch (_activeFilter) {
+              case CompetitionFilter.ongoing:
+                return s == 'ongoing';
+              case CompetitionFilter.upcoming:
+                return s == 'upcoming';
+              case CompetitionFilter.completed:
+                return s == 'completed';
+              case CompetitionFilter.all:
+              default:
+                return true;
+            }
+          });
+
+      final compsToShow = useServer ? serverComps : filtered;
+
+      if (mounted) setState(() {
+        _competitions = compsToShow;
+        ongoingCount = ongoing;
+        upcomingCount = upcoming;
+        completedCount = completed;
+        _loading = false;
+        _refreshing = false;
+        _error = null;
+      });
     } catch (e) {
       if (mounted) setState(() {
         _error = 'Network error: ${e.toString()}';
@@ -205,6 +267,10 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
       });
     }
   }
+
+  // ---------------------------
+  // rest of the original code
+  // ---------------------------
 
   Color _statusColor(String status) {
     switch (status) {
@@ -286,86 +352,138 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
   }
 
   Widget _topHeader() {
+    // Keep the same app gradient behind the header; AppBar itself is transparent
     return AppBar(
       elevation: 0,
-      backgroundColor: Colors.transparent,
+      backgroundColor: Colors.transparent, // <-- make AppBar transparent
       automaticallyImplyLeading: false,
-      title: Row(
-        children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), shape: BoxShape.circle),
-            child: ClipOval(
-              child: Image.asset('assets/logo.png', fit: BoxFit.contain, errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white)),
-            ),
-          ),
-          const SizedBox(width: 10),
-          const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
-        ],
-      ),
-      actions: _isLoggedIn
-          ? [
-        Padding(
-          padding: const EdgeInsets.only(right: 8.0),
-          child: Row(
-            children: [
-              if (_currentUser != null) ...[
-                Text(
-                  (_currentUser!['name'] ?? 'User').toString(),
-                  style: const TextStyle(color: Colors.white70),
-                ),
-                const SizedBox(width: 8),
-              ],
-              PopupMenuButton<String>(
-                color: const Color(0xFF07101A),
-                onSelected: (val) async {
-                  if (val == 'logout') await _handleLogout();
-                },
-                itemBuilder: (ctx) => const [
-                  PopupMenuItem(value: 'logout', child: Text('Logout')),
-                ],
-                child: CircleAvatar(
-                  radius: 16,
-                  backgroundColor: Colors.white.withOpacity(0.06),
-                  child: Text(
-                    _currentUser != null && _currentUser!['name'] != null && _currentUser!['name'].toString().isNotEmpty
-                        ? _currentUser!['name'].toString()[0].toUpperCase()
-                        : 'U',
-                    style: const TextStyle(color: Colors.white),
-                  ),
+      toolbarHeight: kToolbarHeight + 8,
+      titleSpacing: 12,
+      title: Container(
+        // The small rounded, semi-transparent card (same treatment as LoginScreen)
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.06)),
+        ),
+        child: Row(
+          children: [
+            // circular logo with gradient background (same as login)
+            Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(gradient: AppTheme.gradient, shape: BoxShape.circle),
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white),
                 ),
               ),
-              const SizedBox(width: 8),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Container(
+                padding: const EdgeInsets.only(left: 4),
+                alignment: Alignment.centerLeft,
+                child: const Text(
+                  'Competitions',
+                  style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
+                ),
+              ),
+            ),
+
+            // Actions (Login/Register or user avatar)
+            if (_isLoggedIn)
+              Row(
+                children: [
+                  if (_currentUser != null) ...[
+                    Text(
+                      (_currentUser!['name'] ?? 'User').toString(),
+                      style: const TextStyle(color: Colors.white70),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  PopupMenuButton<String>(
+                    // Use same translucent card-like background as the top header
+                    color: Colors.white.withOpacity(0.04),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10), side: BorderSide(color: Colors.white.withOpacity(0.04))),
+                    offset: const Offset(0, 44),
+                    onSelected: (val) async {
+                      if (val == 'logout') {
+                        await _handleLogout();
+                      } else if (val == 'profile') {
+                        Navigator.pushNamed(context, '/profile');
+                      }
+                    },
+                    itemBuilder: (ctx) => [
+                      PopupMenuItem(
+                        value: 'profile',
+                        child: Row(
+                          children: const [
+                            Icon(Icons.person, size: 18, color: Colors.white70),
+                            SizedBox(width: 8),
+                            Text('Profile', style: TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                      ),
+                      PopupMenuItem(
+                        value: 'logout',
+                        child: Row(
+                          children: const [
+                            Icon(Icons.logout, size: 18, color: Colors.redAccent),
+                            SizedBox(width: 8),
+                            Text('Logout', style: TextStyle(color: Colors.redAccent)),
+                          ],
+                        ),
+                      ),
+                    ],
+                    child: CircleAvatar(
+                      radius: 16,
+                      backgroundColor: Colors.white.withOpacity(0.06),
+                      child: Text(
+                        _currentUser != null && _currentUser!['name'] != null && _currentUser!['name'].toString().isNotEmpty
+                            ? _currentUser!['name'].toString()[0].toUpperCase()
+                            : 'U',
+                        style: const TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () async {
+                      await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+                      await _checkAuthStatus();
+                    },
+                    child: const Text('Login', style: TextStyle(color: Colors.white)),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(color: Colors.white.withOpacity(0.12)),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      backgroundColor: Colors.transparent,
+                    ),
+                    onPressed: () async {
+                      await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+                      await _checkAuthStatus();
+                    },
+                    child: const Text('Register'),
+                  ),
+                ],
+              ),
+          ],
         ),
-      ]
-          : [
-        TextButton(
-          onPressed: () async {
-            await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
-            await _checkAuthStatus();
-          },
-          child: const Text('Login', style: TextStyle(color: Colors.white)),
-        ),
-        const SizedBox(width: 8),
-        OutlinedButton(
-          style: OutlinedButton.styleFrom(
-            side: BorderSide(color: Colors.white.withOpacity(0.12)),
-            foregroundColor: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            backgroundColor: Colors.transparent,
-          ),
-          onPressed: () async {
-            await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
-            await _checkAuthStatus();
-          },
-          child: const Text('Register'),
-        ),
-        const SizedBox(width: 12),
-      ],
+      ),
     );
   }
 
@@ -453,34 +571,33 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
     );
   }
 
-  Widget _buildList() {
+  // extracted inner list to avoid Expanded duplication and allow transparent RefreshIndicator
+  Widget _buildListInner() {
     if (_loading) {
-      return const Expanded(child: Center(child: CircularProgressIndicator()));
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
-      return Expanded(
-        child: Center(
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Text(_error!, style: const TextStyle(color: Colors.white70)),
-            const SizedBox(height: 12),
-            ElevatedButton(onPressed: _fetchCompetitions, child: const Text('Retry'))
-          ]),
-        ),
+      return Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Text(_error!, style: const TextStyle(color: Colors.white70)),
+          const SizedBox(height: 12),
+          ElevatedButton(onPressed: _fetchCompetitions, child: const Text('Retry'))
+        ]),
       );
     }
 
     if (_competitions.isEmpty) {
-      return Expanded(
-        child: Center(
-          child: Text('No competitions found', style: TextStyle(color: Colors.white70)),
-        ),
-      );
+      return Center(child: Text('No competitions found', style: TextStyle(color: Colors.white70)));
     }
 
-    return Expanded(
-      child: RefreshIndicator(
-        onRefresh: () => _fetchCompetitions(forceRefresh: true),
+    return RefreshIndicator(
+      // prevent RefreshIndicator from painting a white rectangle behind the list
+      backgroundColor: Colors.transparent,
+      color: Colors.white70,
+      onRefresh: () => _fetchCompetitions(forceRefresh: true),
+      child: Container(
+        color: Colors.transparent,
         child: ListView.separated(
           physics: const AlwaysScrollableScrollPhysics(),
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -489,12 +606,47 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
           itemBuilder: (context, idx) {
             final c = _competitions[idx];
             final status = _computeStatus(c);
-            final postedBy = (c['posted_by'] ?? c['postedBy']) as Map<String, dynamic>? ?? {};
+
+            // 'postedBy' mapping: check many possible shapes returned by API
+            final rawPostedBy = c['posted_by'] ??
+                c['postedBy'] ??
+                c['createdBy'] ??
+                c['created_by'] ??
+                c['createdByUser'] ??
+                c['createdByUserData'] ??
+                c['createdByData'];
+
+            Map<String, dynamic>? postedBy;
+            if (rawPostedBy is Map<String, dynamic>) {
+              postedBy = rawPostedBy;
+            } else if (rawPostedBy is String) {
+              postedBy = {'name': rawPostedBy};
+            } else if (rawPostedBy != null) {
+              // sometimes API returns nested object as dynamic Map (not typed)
+              try {
+                postedBy = Map<String, dynamic>.from(rawPostedBy);
+              } catch (_) {
+                postedBy = null;
+              }
+            } else {
+              postedBy = null;
+            }
+
             final start = c['start_date'] != null ? DateTime.tryParse(c['start_date'].toString()) : null;
             final end = c['end_date'] != null ? DateTime.tryParse(c['end_date'].toString()) : null;
             final df = DateFormat('d MMM');
 
-            final seatsRemaining = c['seats_remaining'] ?? c['seatsRemaining'] ?? 0;
+            // new fields extracted safely
+            final contentSourceType = c['content_source_type'] ?? c['contentSourceType'] ?? c['source'] ?? '';
+            final sponsor = c['sponsor'] ?? '';
+            final registrationDeadlineRaw = c['registration_deadline'] ?? c['registrationDeadline'] ?? c['reg_deadline'];
+            DateTime? registrationDeadline;
+            if (registrationDeadlineRaw != null) registrationDeadline = DateTime.tryParse(registrationDeadlineRaw.toString());
+            final maxTeamSize = c['max_team_size'] ?? c['maxTeamSize'] ?? c['team_size'] ?? null;
+            final totalSeats = c['total_seats'] ?? c['totalSeats'] ?? c['seats_total'] ?? null;
+            final seatsRemaining = c['seats_remaining'] ?? c['seatsRemaining'] ?? c['remaining_seats'] ?? 0;
+
+            final seatsRemainingInt = (seatsRemaining is int) ? seatsRemaining : int.tryParse(seatsRemaining.toString()) ?? 0;
             final membersCount = c['stats'] != null ? (c['stats']['totalRegistrations'] ?? c['membersCount'] ?? 0) : (c['membersCount'] ?? 0);
             final tags = (c['tags'] as List<dynamic>?)?.map((t) => t.toString()).toList() ?? [];
 
@@ -507,9 +659,13 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
               end: end,
               tags: tags,
               membersCount: membersCount,
-              seatsRemaining: seatsRemaining,
-              postedByName: postedBy['name'] ?? postedBy['org'] ?? 'Unknown',
-              sponsor: c['sponsor'],
+              seatsRemaining: seatsRemainingInt,
+              postedByName: postedBy != null ? (postedBy['name'] ?? postedBy['org'] ?? postedBy['username'] ?? '') : '',
+              sponsor: sponsor?.toString(),
+              contentSourceType: contentSourceType?.toString(),
+              registrationDeadline: registrationDeadline,
+              maxTeamSize: maxTeamSize != null ? int.tryParse(maxTeamSize.toString()) : null,
+              totalSeats: totalSeats != null ? int.tryParse(totalSeats.toString()) : null,
               rules: c['rules'],
               eligibility: c['eligibility_criteria'],
               contact: c['contact_info'],
@@ -526,19 +682,23 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Make scaffold transparent so our gradient body is visible (prevents white blanks)
+      // Let the gradient show behind the AppBar
+      extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
       body: Container(
         decoration: const BoxDecoration(gradient: AppTheme.gradient),
-        child: Column(
-          children: [
-            const SizedBox(height: 12),
-            _filtersRow(),
-            _searchBar(),
-            if (_loading) const LinearProgressIndicator(minHeight: 3),
-            _buildList(),
-          ],
+        child: SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              _filtersRow(),
+              _searchBar(),
+              if (_loading) const LinearProgressIndicator(minHeight: 3),
+              // expanded inner list (transparent)
+              Expanded(child: _buildListInner()),
+            ],
+          ),
         ),
       ),
     );
@@ -603,6 +763,10 @@ class _CompetitionCard extends StatefulWidget {
   final int seatsRemaining;
   final String postedByName;
   final String? sponsor;
+  final String? contentSourceType;
+  final DateTime? registrationDeadline;
+  final int? maxTeamSize;
+  final int? totalSeats;
   final dynamic rules;
   final dynamic eligibility;
   final dynamic contact;
@@ -622,6 +786,10 @@ class _CompetitionCard extends StatefulWidget {
     required this.seatsRemaining,
     required this.postedByName,
     this.sponsor,
+    this.contentSourceType,
+    this.registrationDeadline,
+    this.maxTeamSize,
+    this.totalSeats,
     this.rules,
     this.eligibility,
     this.contact,
@@ -642,6 +810,19 @@ class _CompetitionCardState extends State<_CompetitionCard> {
   Widget build(BuildContext context) {
     final df = DateFormat('d MMM');
     final corner = BorderRadius.circular(14);
+    final ddFmt = DateFormat('d MMM yyyy, hh:mm a');
+
+    Widget _pill(String text) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.02),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.01)),
+        ),
+        child: Text(text, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+      );
+    }
 
     return Card(
       color: Colors.white.withOpacity(0.03),
@@ -672,13 +853,35 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                 const SizedBox(height: 6),
                 Text(widget.subtitle, style: const TextStyle(color: Colors.white70)),
                 const SizedBox(height: 8),
+                // Row of small pills: date, participants, seats etc
                 Wrap(spacing: 8, runSpacing: 6, children: [
                   if (widget.start != null && widget.end != null)
-                    Chip(label: Text('${df.format(widget.start!)} → ${df.format(widget.end!)}'), backgroundColor: Colors.white.withOpacity(0.02), labelStyle: const TextStyle(color: Colors.white70)),
-                  Chip(label: Text('${widget.membersCount} participants'), backgroundColor: Colors.white.withOpacity(0.02), labelStyle: const TextStyle(color: Colors.white70)),
-                  Chip(label: Text('${widget.seatsRemaining} seats left'), backgroundColor: Colors.white.withOpacity(0.02), labelStyle: const TextStyle(color: Colors.white70)),
-                  ...widget.tags.take(3).map((t) => Chip(label: Text(t), backgroundColor: Colors.white.withOpacity(0.02), labelStyle: const TextStyle(color: Colors.white70))).toList(),
-                ])
+                    _pill('${df.format(widget.start!)} → ${df.format(widget.end!)}'),
+                  _pill('${widget.membersCount} participants'),
+                  _pill('${widget.seatsRemaining} seats left'),
+                  if (widget.totalSeats != null) _pill('Total seats: ${widget.totalSeats}'),
+                  if (widget.maxTeamSize != null) _pill('Max team: ${widget.maxTeamSize}'),
+                  if (widget.contentSourceType != null && widget.contentSourceType!.isNotEmpty) _pill(widget.contentSourceType!),
+                ]),
+                const SizedBox(height: 8),
+                // Tags as small dark pills
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: widget.tags.map((t) {
+                    final txt = t.trim();
+                    if (txt.isEmpty) return const SizedBox.shrink();
+                    return Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.02),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.white.withOpacity(0.01)),
+                      ),
+                      child: Text(txt, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                    );
+                  }).toList(),
+                ),
               ]),
             )
           ]),
@@ -696,18 +899,47 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                   onTap: () => setState(() => _expanded = !_expanded),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                      Row(children: [
-                        CircleAvatar(radius: 14, backgroundColor: Colors.white.withOpacity(0.06), child: Text(widget.postedByName.isNotEmpty ? widget.postedByName[0].toUpperCase() : 'U')),
-                        const SizedBox(width: 8),
-                        Text('Posted by ${widget.postedByName}', style: const TextStyle(color: Colors.white70)),
-                      ]),
-                      Row(children: [
-                        TextButton(onPressed: widget.onRegister, child: const Text('Register', style: TextStyle(color: Colors.white70))),
-                        const SizedBox(width: 6),
-                        Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.white70),
-                      ])
-                    ]),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            CircleAvatar(
+                              radius: 14,
+                              backgroundColor: Colors.white.withOpacity(0.06),
+                              child: Text(widget.postedByName.isNotEmpty ? widget.postedByName[0].toUpperCase() : 'U'),
+                            ),
+                            const SizedBox(width: 8),
+                            Text('Posted by ${widget.postedByName.isNotEmpty ? widget.postedByName : 'Unknown'}', style: const TextStyle(color: Colors.white70)),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            // --- Conditional action based on status ---
+                            if (widget.status == 'upcoming') ...[
+                              TextButton(
+                                onPressed: widget.onRegister,
+                                child: const Text('Register', style: TextStyle(color: Colors.white70)),
+                              ),
+                            ] else if (widget.status == 'ongoing') ...[
+                              TextButton(
+                                onPressed: () {
+                                  // Navigate to submission flow
+                                  Navigator.pushNamed(context, '/competitions/submit', arguments: {
+                                    'competitionTitle': widget.title,
+                                  });
+                                },
+                                child: const Text('Submit', style: TextStyle(color: Colors.white70)),
+                              ),
+                            ] else if (widget.status == 'completed') ...[
+                              const Text('Completed', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.w500)),
+                            ],
+                            const SizedBox(width: 6),
+                            Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.white70),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
                 if (_expanded) ...[
@@ -715,26 +947,46 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      if ((widget.sponsor ?? '').toString().isNotEmpty) Text('Sponsor: ${widget.sponsor}', style: const TextStyle(color: Colors.white70)),
-                      if (widget.rules != null) ...[
+                      // Sponsor
+                      if ((widget.sponsor ?? '').toString().isNotEmpty) ...[
+                        Text('Sponsor: ${widget.sponsor}', style: const TextStyle(color: Colors.white70)),
                         const SizedBox(height: 8),
+                      ],
+                      // Registration deadline
+                      if (widget.registrationDeadline != null) ...[
+                        Text('Registration deadline: ${ddFmt.format(widget.registrationDeadline!)}', style: const TextStyle(color: Colors.white70)),
+                        const SizedBox(height: 8),
+                      ],
+                      // Max team size / total seats
+                      if (widget.maxTeamSize != null || widget.totalSeats != null) ...[
+                        Row(children: [
+                          if (widget.maxTeamSize != null) Text('Max team size: ${widget.maxTeamSize}', style: const TextStyle(color: Colors.white70)),
+                          if (widget.maxTeamSize != null && widget.totalSeats != null) const SizedBox(width: 16),
+                          if (widget.totalSeats != null) Text('Total seats: ${widget.totalSeats}', style: const TextStyle(color: Colors.white70)),
+                        ]),
+                        const SizedBox(height: 8),
+                      ],
+                      // Rules
+                      if (widget.rules != null) ...[
                         const Text('Rules:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
                         const SizedBox(height: 6),
                         Text(widget.rules.toString(), style: const TextStyle(color: Colors.white70)),
-                      ],
-                      if (widget.eligibility != null) ...[
                         const SizedBox(height: 8),
+                      ],
+                      // Eligibility
+                      if (widget.eligibility != null) ...[
                         const Text('Eligibility:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
                         const SizedBox(height: 6),
                         Text(widget.eligibility.toString(), style: const TextStyle(color: Colors.white70)),
-                      ],
-                      if (widget.contact != null) ...[
                         const SizedBox(height: 8),
+                      ],
+                      // Contact
+                      if (widget.contact != null) ...[
                         Text('Contact: ${_contactToString(widget.contact)}', style: const TextStyle(color: Colors.white70)),
                       ]
                     ]),
                   )
-                ]
+                ],
               ],
             ),
           )

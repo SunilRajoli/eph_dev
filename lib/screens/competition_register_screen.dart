@@ -38,7 +38,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
   @override
   void initState() {
     super.initState();
-    // nothing here — real init happens in didChangeDependencies so we can read args
+    // real init happens in didChangeDependencies so we can read args
   }
 
   @override
@@ -50,18 +50,14 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
       if (id != null && id.isNotEmpty) {
         competitionId = id;
         _loadCompetition();
-      } else {
-        setState(() {
-          _loading = false;
-          _error = 'Invalid competition';
-        });
+        return;
       }
-    } else {
-      setState(() {
-        _loading = false;
-        _error = 'Missing competition data';
-      });
     }
+    // If args are missing or invalid, show an error
+    setState(() {
+      _loading = false;
+      _error = 'Missing or invalid competition ID';
+    });
   }
 
   @override
@@ -72,6 +68,22 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
     super.dispose();
   }
 
+  // Helper to safely parse ints from dynamic values
+  int _toInt(dynamic v, {int fallback = 0}) {
+    if (v == null) return fallback;
+    if (v is int) return v;
+    if (v is String) {
+      return int.tryParse(v) ?? fallback;
+    }
+    if (v is double) return v.toInt();
+    try {
+      return (v as num).toInt();
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  // Robustly load competition details from possible response shapes
   Future<void> _loadCompetition() async {
     setState(() {
       _loading = true;
@@ -80,21 +92,77 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
 
     try {
       final res = await ApiService.getCompetitionDetails(competitionId);
-      if (res['success'] == true) {
-        final data = res['data'] as Map<String, dynamic>?;
-        final comp = data != null && data['competition'] != null ? Map<String, dynamic>.from(data['competition']) : null;
-        if (comp != null) {
+
+      // If ApiService returns map-like structure check multiple locations
+      Map<String, dynamic>? comp;
+      if (res == null) {
+        setState(() {
+          _error = 'Empty response from server';
+          _loading = false;
+        });
+        return;
+      }
+
+      if (res is Map<String, dynamic>) {
+        // success boolean first
+        final bool ok = res['success'] == true;
+
+        if (!ok) {
+          // try to extract server message
+          final msg = res['message'] ?? res['error'] ?? 'Failed to load competition';
           setState(() {
-            _competition = comp;
-            _maxTeamSize = (comp['max_team_size'] ?? comp['maxTeamSize'] ?? 1) as int;
-            _seatsRemaining = (comp['seats_remaining'] ?? comp['seatsRemaining'] ?? 0) as int;
+            _error = msg.toString();
             _loading = false;
           });
           return;
         }
+
+        // Many API shapes: res['data']['competition'], res['competition'], res['data']
+        if (res['competition'] != null && res['competition'] is Map) {
+          comp = Map<String, dynamic>.from(res['competition']);
+        } else if (res['data'] != null) {
+          final data = res['data'];
+          if (data is Map<String, dynamic>) {
+            if (data['competition'] != null && data['competition'] is Map) {
+              comp = Map<String, dynamic>.from(data['competition']);
+            } else if (data['competitions'] != null && data['competitions'] is List && data['competitions'].isNotEmpty) {
+              // sometimes single competition returned under competitions list
+              final first = data['competitions'][0];
+              if (first is Map<String, dynamic>) comp = Map<String, dynamic>.from(first);
+            } else {
+              // if data already is the competition map
+              comp = Map<String, dynamic>.from(data);
+            }
+          }
+        } else {
+          // maybe the entire response is the competition object
+          try {
+            comp = Map<String, dynamic>.from(res);
+            // avoid treating whole envelope as comp if it only contains 'success'
+            if (comp.keys.length <= 2 && comp.containsKey('success')) comp = null;
+          } catch (_) {
+            comp = null;
+          }
+        }
       }
+
+      if (comp == null) {
+        setState(() {
+          _error = 'Competition not found in server response';
+          _loading = false;
+        });
+        return;
+      }
+
+      // set values safely
+      final maxTeam = comp['max_team_size'] ?? comp['maxTeamSize'] ?? comp['team_size'];
+      final seatsRemaining = comp['seats_remaining'] ?? comp['seatsRemaining'] ?? comp['remaining_seats'] ?? comp['seats'];
+
       setState(() {
-        _error = res['message'] ?? 'Failed to load competition';
+        _competition = comp;
+        _maxTeamSize = _toInt(maxTeam, fallback: 1);
+        if (_maxTeamSize < 1) _maxTeamSize = 1;
+        _seatsRemaining = _toInt(seatsRemaining, fallback: 0);
         _loading = false;
       });
     } catch (e) {
@@ -187,9 +255,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
     if (!loggedIn) return;
 
     // extra validations
-    if (_type == _RegType.team && _memberEmails.isEmpty && (teamNameCtrl.text.trim().isEmpty)) {
-      // team must have at least a team name and ideally members (but some competitions allow 1-person team)
-      // We'll allow single-member team if server supports it; still require team name.
+    if (_type == _RegType.team && (teamNameCtrl.text.trim().isEmpty)) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Team name is required for team registration')));
       return;
     }
@@ -208,26 +274,30 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
       final payload = <String, dynamic>{
         'type': _type == _RegType.individual ? 'individual' : 'team',
         if (_type == _RegType.team) 'team_name': teamNameCtrl.text.trim(),
-        if (_memberEmails.isNotEmpty) 'members': _memberEmails,
+        if (_memberEmails.isNotEmpty) 'member_emails': _memberEmails,
         if (abstractCtrl.text.trim().isNotEmpty) 'abstract': abstractCtrl.text.trim(),
       };
 
       final res = await ApiService.registerForCompetition(competitionId, payload);
-      if (res['success'] == true) {
-        // optionally update UI / seats
+
+      if (res is Map<String, dynamic> && res['success'] == true) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Registration submitted')));
-        // navigate back to competitions or to my registrations
         if (mounted) {
-          // refresh competitions list by popping back to competitions
+          // go back to competitions list (or to registrations if you prefer)
           Navigator.pushNamedAndRemoveUntil(context, '/competitions', (route) => false);
         }
-      } else {
-        final msg = res['message'] ?? 'Registration failed';
-        setState(() {
-          _error = msg;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+        return;
       }
+
+      // If failed, try to extract message
+      String msg = 'Registration failed';
+      if (res is Map<String, dynamic>) {
+        msg = res['message']?.toString() ?? res['error']?.toString() ?? msg;
+      }
+      setState(() {
+        _error = msg;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
     } catch (e) {
       final msg = 'Network error: ${e.toString()}';
       setState(() {
@@ -239,33 +309,70 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
     }
   }
 
-  Widget _buildHeader() {
-    final title = _competition != null ? _competition!['title']?.toString() ?? '' : 'Register';
+  Widget _topHeaderContent() {
+    final title = _competition != null ? _competition!['title']?.toString() ?? 'Register' : 'Register';
     return Row(
       children: [
-        IconButton(
-          icon: const Icon(Icons.arrow_back),
-          color: Colors.white,
-          onPressed: () => Navigator.pop(context),
+        Container(
+          width: 36,
+          height: 36,
+          decoration: const BoxDecoration(gradient: AppTheme.gradient, shape: BoxShape.circle),
+          child: ClipOval(
+            child: Image.asset(
+              'assets/logo.png',
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white),
+            ),
+          ),
         ),
-        const SizedBox(width: 8),
+        const SizedBox(width: 12),
         Expanded(
           child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
         ),
+        IconButton(
+          icon: const Icon(Icons.close, color: Colors.white70),
+          onPressed: () => Navigator.pop(context),
+        )
       ],
+    );
+  }
+
+  /// Small custom pill-like option used instead of ChoiceChip to avoid
+  /// unwanted white fill on dark translucent backgrounds.
+  Widget _optionPill({
+    required String label,
+    required bool selected,
+    required VoidCallback onTap,
+    EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: selected ? Colors.white.withOpacity(0.06) : Colors.white.withOpacity(0.03),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: selected ? Colors.white.withOpacity(0.08) : Colors.transparent),
+        ),
+        child: Text(label, style: const TextStyle(color: Colors.white)),
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width * 0.94;
+    final width = MediaQuery.of(context).size.width * 0.96;
+
     return Scaffold(
+      extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        title: const Text('Competition Registration'),
-        leading: IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => Navigator.pop(context)),
+        systemOverlayStyle: Theme.of(context).appBarTheme.systemOverlayStyle,
+        title: const SizedBox.shrink(), // keep AppBar minimal; header inside body
+        leading: Container(),
       ),
       body: Container(
         decoration: const BoxDecoration(gradient: AppTheme.gradient),
@@ -278,51 +385,97 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
               physics: const BouncingScrollPhysics(),
               child: Column(
                 children: [
+                  // Top translucent card (same style as competitions top header)
+                  Container(
+                    width: width,
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.03),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.white.withOpacity(0.06)),
+                    ),
+                    child: _topHeaderContent(),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // If error show error + retry
+                  if (_error != null) ...[
+                    Container(
+                      width: width,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.shade900.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.error_outline, color: Colors.redAccent),
+                          const SizedBox(width: 8),
+                          Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+                          TextButton(
+                            onPressed: _loadCompetition,
+                            child: const Text('Retry', style: TextStyle(color: Colors.white70)),
+                          )
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+
+                  // Main translucent card with details + form
                   Container(
                     width: width,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.04),
+                      color: Colors.white.withOpacity(0.03),
                       borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: Colors.white.withOpacity(0.06)),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _buildHeader(),
-                        const SizedBox(height: 8),
                         if (_competition != null) ...[
                           Text(
                             _competition!['description']?.toString() ?? '',
                             style: const TextStyle(color: Colors.white70),
                           ),
                           const SizedBox(height: 8),
-                          Row(
-                            children: [
-                              if (_competition!['start_date'] != null && _competition!['end_date'] != null)
-                                Chip(
-                                  label: Text(
-                                    '${DateFormat('d MMM').format(DateTime.parse(_competition!['start_date']))} → ${DateFormat('d MMM').format(DateTime.parse(_competition!['end_date']))}',
-                                  ),
-                                  backgroundColor: Colors.white.withOpacity(0.02),
-                                  labelStyle: const TextStyle(color: Colors.white70),
+                          Wrap(spacing: 8, runSpacing: 6, children: [
+                            if (_competition!['start_date'] != null && _competition!['end_date'] != null)
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.02),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: Colors.white.withOpacity(0.01)),
                                 ),
-                              const SizedBox(width: 8),
-                              Chip(
-                                label: Text('Seats: $_seatsRemaining'),
-                                backgroundColor: Colors.white.withOpacity(0.02),
-                                labelStyle: const TextStyle(color: Colors.white70),
+                                child: Text(
+                                  '${DateFormat('d MMM').format(DateTime.parse(_competition!['start_date']))} → ${DateFormat('d MMM').format(DateTime.parse(_competition!['end_date']))}',
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
                               ),
-                              const SizedBox(width: 8),
-                              Chip(
-                                label: Text('Team limit: $_maxTeamSize'),
-                                backgroundColor: Colors.white.withOpacity(0.02),
-                                labelStyle: const TextStyle(color: Colors.white70),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white.withOpacity(0.01)),
                               ),
-                            ],
-                          ),
+                              child: Text('Seats: $_seatsRemaining', style: const TextStyle(color: Colors.white70)),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(
+                                color: Colors.white.withOpacity(0.02),
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: Colors.white.withOpacity(0.01)),
+                              ),
+                              child: Text('Team limit: $_maxTeamSize', style: const TextStyle(color: Colors.white70)),
+                            ),
+                          ]),
+                          const SizedBox(height: 12),
                         ],
-                        const SizedBox(height: 12),
+
                         Form(
                           key: _formKey,
                           child: Column(
@@ -332,26 +485,16 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                               const SizedBox(height: 8),
                               Row(
                                 children: [
-                                  ChoiceChip(
-                                    label: const Text('Individual'),
+                                  _optionPill(
+                                    label: 'Individual',
                                     selected: _type == _RegType.individual,
-                                    onSelected: (v) => setState(() {
-                                      _type = _RegType.individual;
-                                    }),
-                                    selectedColor: Colors.white.withOpacity(0.06),
-                                    backgroundColor: Colors.white.withOpacity(0.03),
-                                    labelStyle: const TextStyle(color: Colors.white),
+                                    onTap: () => setState(() => _type = _RegType.individual),
                                   ),
                                   const SizedBox(width: 8),
-                                  ChoiceChip(
-                                    label: const Text('Team'),
+                                  _optionPill(
+                                    label: 'Team',
                                     selected: _type == _RegType.team,
-                                    onSelected: (v) => setState(() {
-                                      _type = _RegType.team;
-                                    }),
-                                    selectedColor: Colors.white.withOpacity(0.06),
-                                    backgroundColor: Colors.white.withOpacity(0.03),
-                                    labelStyle: const TextStyle(color: Colors.white),
+                                    onTap: () => setState(() => _type = _RegType.team),
                                   ),
                                 ],
                               ),
@@ -359,6 +502,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
 
                               // Team fields
                               if (_type == _RegType.team) ...[
+                                // Team name field (translucent)
                                 TextFormField(
                                   controller: teamNameCtrl,
                                   style: const TextStyle(color: Colors.white),
@@ -398,7 +542,11 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                     ElevatedButton(
                                       onPressed: _addMemberEmail,
                                       child: const Text('Add'),
-                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.white.withOpacity(0.06)),
+                                      style: ElevatedButton.styleFrom(
+                                        backgroundColor: Colors.white.withOpacity(0.06),
+                                        elevation: 0,
+                                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                                      ),
                                     )
                                   ],
                                 ),
@@ -463,6 +611,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                       ],
                     ),
                   ),
+                  const SizedBox(height: 16),
                 ],
               ),
             ),

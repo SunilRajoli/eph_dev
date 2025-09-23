@@ -126,6 +126,28 @@ class ApiService {
     return _parseResponse(res);
   }
 
+  // perks
+  static Future<Map<String,dynamic>> getPerks({int page = 1, int limit = 50, String? search}) async {
+    final query = {
+      'page': page.toString(),
+      'limit': limit.toString(),
+    };
+    if (search != null && search.isNotEmpty) query['search'] = search;
+    final uri = Uri.parse("$baseUrl/perks").replace(queryParameters: query);
+    final res = await http.get(uri, headers: {"Content-Type":"application/json"});
+    return _parseResponse(res);
+  }
+
+  static Future<Map<String,dynamic>> redeemPerk(String perkId) async {
+    final token = await AuthService.getToken();
+    final url = Uri.parse("$baseUrl/perks/$perkId/redeem");
+    final res = await http.post(url, headers: {
+      "Content-Type":"application/json",
+      if (token != null) "Authorization": "Bearer $token"
+    });
+    return _parseResponse(res);
+  }
+
 
   static Future<Map<String, dynamic>> getCompetitions({
     String? filter,

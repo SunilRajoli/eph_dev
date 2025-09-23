@@ -139,8 +139,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
       'branch': _branchCtrl.text.trim(),
       'year': year,
       'skills': _skills,
-      // Not sending profile_pic_url (user asked no photo)
-      // Not sending role/email/xp/badges — backend will ignore or preserve them
     };
 
     try {
@@ -193,26 +191,72 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _topHeader() {
+    // Transparent AppBar with small rounded card (same as competitions header)
+    return AppBar(
+      elevation: 0,
+      backgroundColor: Colors.transparent,
+      automaticallyImplyLeading: false,
+      toolbarHeight: kToolbarHeight + 8,
+      titleSpacing: 12,
+      title: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.04),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white.withOpacity(0.06)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36,
+              height: 36,
+              decoration: const BoxDecoration(gradient: AppTheme.gradient, shape: BoxShape.circle),
+              child: ClipOval(
+                child: Image.asset(
+                  'assets/logo.png',
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white),
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('EPH', style: TextStyle(fontWeight: FontWeight.w800, color: Colors.white, fontSize: 14)),
+                // show profile name (or 'Profile') as a small subtitle
+                Text(
+                  _user != null && (_user!['name'] ?? '').toString().isNotEmpty ? _user!['name'].toString() : 'Profile',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ],
+            ),
+            const Spacer(),
+            // Edit / Cancel action moved inside header card to match competitions navbar
+            if (!_editing)
+              TextButton(
+                onPressed: _user == null ? null : () => setState(() => _editing = true),
+                child: const Text('Edit', style: TextStyle(color: Colors.white)),
+              )
+            else
+              TextButton(
+                onPressed: () => setState(() => _editing = false),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Profile'),
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        actions: [
-          if (!_editing)
-            TextButton(
-              onPressed: _user == null ? null : () => setState(() => _editing = true),
-              child: const Text('Edit', style: TextStyle(color: Colors.white)),
-            )
-          else
-            TextButton(
-              onPressed: () => setState(() => _editing = false),
-              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
-            )
-        ],
-      ),
+      // Let the gradient show behind the AppBar
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
+      appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
       body: Container(
         width: double.infinity,
         height: double.infinity,

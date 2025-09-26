@@ -35,6 +35,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final firmWebsiteCtrl = TextEditingController();
 
   bool loading = false;
+  bool oauthLoading = false;
   String errorMsg = "";
   String? selectedRole;
 
@@ -170,6 +171,32 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  // Reuse the same initiate OAuth flow used in LoginScreen
+  Future<void> _handleOAuthLogin(String provider) async {
+    setState(() {
+      oauthLoading = true;
+      errorMsg = '';
+    });
+
+    try {
+      final result = await ApiService.initiateOAuth(provider);
+      final url = result['url'] as String?;
+      if (url != null && url.isNotEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Redirecting to ${provider.toUpperCase()}...')),
+          );
+        }
+        // NOTE: open the url with url_launcher from the UI caller
+      } else {
+        if (mounted) setState(() => errorMsg = result['message'] ?? 'OAuth initiation failed');
+      }
+    } catch (e) {
+      if (mounted) setState(() => errorMsg = 'OAuth error: ${e.toString()}');
+    } finally {
+      if (mounted) setState(() => oauthLoading = false);
+    }
+  }
 
   Widget _roleSpecificFields() {
     if (selectedRole == 'student') {
@@ -370,6 +397,88 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         const SizedBox(height: 12),
                         TextButton(onPressed: () => Navigator.pushReplacementNamed(context, '/login', arguments: {'role': selectedRole}), child: const Text('Already have account? Login', style: TextStyle(color: Colors.white70))),
                       ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 18),
+
+                  // Divider with OR
+                  Row(
+                    children: [
+                      Expanded(child: Container(height: 1, color: Colors.white.withOpacity(0.2))),
+                      Padding(padding: const EdgeInsets.symmetric(horizontal: 12), child: Text('OR', style: TextStyle(color: Colors.white.withOpacity(0.7)))),
+                      Expanded(child: Container(height: 1, color: Colors.white.withOpacity(0.2))),
+                    ],
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // OAuth Buttons side-by-side (login-screen style)
+                  Row(
+                    children: [
+                      Expanded(
+                        child: InkWell(
+                          onTap: oauthLoading ? null : () => _handleOAuthLogin('google'),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: oauthLoading ? Colors.white.withOpacity(0.03) : Colors.white.withOpacity(0.06),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white.withOpacity(0.04)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Image.asset(
+                                  'assets/google.png',
+                                  height: 20,
+                                  width: 20,
+                                  errorBuilder: (_, __, ___) => const Icon(Icons.g_mobiledata, color: Colors.white70),
+                                ),
+                                const SizedBox(width: 10),
+                                const Text('Continue with Google', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: InkWell(
+                          onTap: oauthLoading ? null : () => _handleOAuthLogin('github'),
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            height: 48,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            decoration: BoxDecoration(
+                              color: oauthLoading ? Colors.white.withOpacity(0.03) : Colors.white.withOpacity(0.06),
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: Colors.white.withOpacity(0.04)),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: const [
+                                Icon(Icons.code, color: Colors.white70),
+                                SizedBox(width: 10),
+                                Text('Continue with GitHub', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 10),
+
+                  // small note about oauth
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8.0),
+                    child: Text(
+                      oauthLoading ? 'Opening provider...' : 'Register quickly using external providers',
+                      style: TextStyle(color: Colors.white.withOpacity(0.65), fontSize: 13),
                     ),
                   ),
                 ],

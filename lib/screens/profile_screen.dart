@@ -1,3 +1,4 @@
+// lib/screens/profile_screen.dart
 import 'package:flutter/material.dart';
 import '../theme/app_theme.dart';
 import '../services/auth_service.dart';
@@ -173,21 +174,56 @@ class _ProfileScreenState extends State<ProfileScreen> {
     Navigator.pushReplacementNamed(context, '/roles');
   }
 
+  /// Responsive label/value widget.
+  /// On wide screens it shows a row with fixed label column and flexible value.
+  /// On narrow screens it stacks label above value to prevent overlap.
   Widget _labelValue(String label, String? value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(width: 110, child: Text(label, style: const TextStyle(color: Colors.white70))),
-        Expanded(child: Text(value == null || value.isEmpty ? '-' : value, style: const TextStyle(color: Colors.white))),
-      ],
-    );
+    return LayoutBuilder(builder: (context, constraints) {
+      final isNarrow = constraints.maxWidth < 420;
+      if (isNarrow) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 6),
+            Text(value == null || value.isEmpty ? '-' : value, style: const TextStyle(color: Colors.white)),
+          ],
+        );
+      } else {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Colors.white70))),
+            Expanded(child: Text(value == null || value.isEmpty ? '-' : value, style: const TextStyle(color: Colors.white))),
+          ],
+        );
+      }
+    });
   }
 
+  // Replaced Chip with a custom translucent pill to match app UI
   Widget _chip(String text) {
-    return Chip(
-      label: Text(text, style: const TextStyle(color: Colors.white70)),
-      backgroundColor: Colors.white.withOpacity(0.04),
-      onDeleted: _editing ? () => _removeSkill(text) : null,
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        // subtle translucent background similar to other cards
+        color: Colors.white.withOpacity(0.02),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.white.withOpacity(0.04)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(text, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          if (_editing) ...[
+            const SizedBox(width: 8),
+            GestureDetector(
+              onTap: () => _removeSkill(text),
+              child: Icon(Icons.close, size: 16, color: Colors.white70),
+            )
+          ]
+        ],
+      ),
     );
   }
 
@@ -336,66 +372,108 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
                       // Name (editable)
                       _editing
-                          ? TextField(
-                        controller: _nameCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'Full name', labelStyle: TextStyle(color: Colors.white70)),
-                      )
+                          ? _buildEditableField(label: 'Full name', controller: _nameCtrl, hint: 'Enter your full name')
                           : _labelValue('Name', _user?['name']?.toString()),
                       const SizedBox(height: 12),
 
                       // College
                       _editing
-                          ? TextField(
-                        controller: _collegeCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'College', labelStyle: TextStyle(color: Colors.white70)),
-                      )
+                          ? _buildEditableField(label: 'College', controller: _collegeCtrl, hint: 'College name')
                           : _labelValue('College', _user?['college']?.toString()),
                       const SizedBox(height: 12),
 
                       // Branch
                       _editing
-                          ? TextField(
-                        controller: _branchCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        decoration: const InputDecoration(labelText: 'Branch', labelStyle: TextStyle(color: Colors.white70)),
-                      )
+                          ? _buildEditableField(label: 'Branch', controller: _branchCtrl, hint: 'e.g. Computer Science')
                           : _labelValue('Branch', _user?['branch']?.toString()),
                       const SizedBox(height: 12),
 
                       // Year
                       _editing
-                          ? TextField(
-                        controller: _yearCtrl,
-                        style: const TextStyle(color: Colors.white),
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(labelText: 'Year', labelStyle: TextStyle(color: Colors.white70)),
-                      )
+                          ? _buildEditableField(label: 'Year', controller: _yearCtrl, hint: 'e.g. 3', keyboardType: TextInputType.number)
                           : _labelValue('Year', _user?['year']?.toString()),
 
                       const SizedBox(height: 14),
 
-                      // Skills
-                      const Text('Skills', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
-                      const SizedBox(height: 8),
-                      Wrap(spacing: 8, runSpacing: 8, children: _skills.map((s) => _chip(s)).toList()),
-                      if (_editing) ...[
-                        const SizedBox(height: 8),
-                        Row(
+                      // SKILLS - Put chips/values inline next to label (as requested)
+                      LayoutBuilder(builder: (context, constraints) {
+                        final narrow = constraints.maxWidth < 420;
+                        // Use two-column style on wide screens; on narrow keep label column and the values in Expanded so they remain "inside" beside label.
+                        return Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
+                            SizedBox(
+                              width: 120,
+                              child: Text('Skills', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                            ),
+                            const SizedBox(width: 8),
                             Expanded(
-                              child: TextField(
-                                controller: _skillsInputCtrl,
-                                style: const TextStyle(color: Colors.white),
-                                decoration: const InputDecoration(hintText: 'Add skill (comma to add multiple)', hintStyle: TextStyle(color: Colors.white60)),
-                                onSubmitted: (_) => _addSkillsFromInput(),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // When editing, show the inline input as the first "chip-like" element in the row
+                                  Wrap(
+                                    spacing: 8,
+                                    runSpacing: 8,
+                                    alignment: WrapAlignment.start,
+                                    children: [
+                                      // existing skill chips (translucent)
+                                      ..._skills.map((s) => _chip(s)),
+                                      // input shown as a small pill-like field when editing
+                                      if (_editing)
+                                        Container(
+                                          constraints: BoxConstraints(maxWidth: narrow ? constraints.maxWidth - 140 : 220),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withOpacity(0.02),
+                                            borderRadius: BorderRadius.circular(10),
+                                            border: Border.all(color: Colors.white.withOpacity(0.04)),
+                                          ),
+                                          child: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              SizedBox(
+                                                width: narrow ? (constraints.maxWidth - 180) : 160,
+                                                child: TextField(
+                                                  controller: _skillsInputCtrl,
+                                                  style: const TextStyle(color: Colors.white, fontSize: 13),
+                                                  decoration: InputDecoration(
+                                                    hintText: 'Add skill',
+                                                    hintStyle: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 13),
+                                                    border: InputBorder.none,
+                                                    isDense: true,
+                                                    contentPadding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+                                                  ),
+                                                  onSubmitted: (_) => _addSkillsFromInput(),
+                                                ),
+                                              ),
+                                              GestureDetector(
+                                                onTap: _addSkillsFromInput,
+                                                child: Padding(
+                                                  padding: const EdgeInsets.symmetric(horizontal: 6.0),
+                                                  child: Icon(Icons.add, size: 18, color: Colors.white70),
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      // if not editing and no skills present, show subtle placeholder text inline
+                                      if (!_editing && _skills.isEmpty)
+                                        Text('—', style: TextStyle(color: Colors.white.withOpacity(0.6))),
+                                    ],
+                                  ),
+                                  // small helper: when lots of chips wrap to next line it's still inside the Expanded area
+                                  if (_skills.isEmpty && _editing)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 6.0),
+                                      child: Text('Add skills (comma separated)', style: TextStyle(color: Colors.white.withOpacity(0.6), fontSize: 12)),
+                                    ),
+                                ],
                               ),
                             ),
-                            IconButton(onPressed: _addSkillsFromInput, icon: const Icon(Icons.add, color: Colors.white70))
                           ],
-                        )
-                      ],
+                        );
+                      }),
 
                       const SizedBox(height: 12),
 
@@ -431,6 +509,63 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ),
       ),
     );
+  }
+
+  /// Builds a full-width editable field with translucent background to match UI.
+  Widget _buildEditableField({
+    required String label,
+    required TextEditingController controller,
+    String? hint,
+    TextInputType? keyboardType,
+  }) {
+    return LayoutBuilder(builder: (context, constraints) {
+      final narrow = constraints.maxWidth < 420;
+      // If narrow, stack label above field; else keep label in left column and field fills right.
+      if (narrow) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 6),
+            TextField(
+              controller: controller,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: keyboardType,
+              decoration: InputDecoration(
+                hintText: hint,
+                hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
+                filled: true,
+                fillColor: Colors.white.withOpacity(0.02),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+          ],
+        );
+      } else {
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(width: 120, child: Text(label, style: const TextStyle(color: Colors.white70))),
+            Expanded(
+              child: TextField(
+                controller: controller,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: keyboardType,
+                decoration: InputDecoration(
+                  hintText: hint,
+                  hintStyle: TextStyle(color: Colors.white.withOpacity(0.6)),
+                  filled: true,
+                  fillColor: Colors.white.withOpacity(0.02),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        );
+      }
+    });
   }
 
   Widget _infoChip(String label, String value) {

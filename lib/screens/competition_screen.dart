@@ -109,7 +109,18 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
     await AuthService.clearToken();
     await _checkAuthStatus();
     await _fetchCompetitions();
-    if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Logged out')));
+    if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: const [
+            Icon(Icons.logout, color: Colors.white),
+            SizedBox(width: 8),
+            Text('Logged out successfully'),
+          ],
+        ),
+        backgroundColor: Colors.green.shade800,
+      ),
+    );
   }
 
   String _filterToQueryParam(CompetitionFilter f) {
@@ -251,7 +262,13 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
       final compsToShow = useServer ? serverComps : filtered;
 
       if (mounted) setState(() {
-        _competitions = compsToShow;
+        // ensure each competition has user flags (defaults false) so UI is predictable
+        _competitions = compsToShow.map((c) {
+          final copy = Map<String, dynamic>.from(c);
+          copy['user_registered'] = copy['user_registered'] == true;
+          copy['user_submitted'] = copy['user_submitted'] == true;
+          return copy;
+        }).toList();
         ongoingCount = ongoing;
         upcomingCount = upcoming;
         completedCount = completed;
@@ -269,15 +286,236 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
   }
 
   // ---------------------------
-  // rest of the original code
+  // Helpers to update local flags when returning from register/submit screens
+  // ---------------------------
+  void _setRegistered(String competitionId, {bool value = true}) {
+    final idx = _competitions.indexWhere((c) => c['id'] == competitionId);
+    if (idx == -1) return;
+    final updated = Map<String, dynamic>.from(_competitions[idx]);
+    updated['user_registered'] = value;
+    setState(() => _competitions[idx] = updated);
+  }
+
+  void _setSubmitted(String competitionId, {bool value = true}) {
+    final idx = _competitions.indexWhere((c) => c['id'] == competitionId);
+    if (idx == -1) return;
+    final updated = Map<String, dynamic>.from(_competitions[idx]);
+    updated['user_submitted'] = value;
+    setState(() => _competitions[idx] = updated);
+  }
+
+  // ---------------------------
+  // Robust register/submit handlers
+  // ---------------------------
+  Future<void> _onTapRegister(Map<String, dynamic> competition) async {
+    // ensure user is logged in, else run login/register flows then continue
+    String? token = await AuthService.getToken();
+    if (token == null || token.isEmpty) {
+      final choice = await showDialog<_AuthChoice>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF07101A),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            title: Row(
+              children: const [
+                Icon(Icons.login, color: Colors.white70, size: 24),
+                SizedBox(width: 8),
+                Text('Login Required', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+            content: const Text(
+              'You must be logged in to register for competitions. Would you like to login or create a new account?',
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+              ),
+              // Register button (subtle/translucent)
+              TextButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register),
+                icon: const Icon(Icons.person_add, size: 18, color: Colors.white70),
+                label: const Text('Register', style: TextStyle(color: Colors.white70)),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.02),
+                  foregroundColor: Colors.white70,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+              // Login button (primary-ish but translucent to match UI)
+              TextButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login),
+                icon: const Icon(Icons.login, size: 18, color: Colors.white),
+                label: const Text('Login', style: TextStyle(color: Colors.white)),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.06),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (choice == null || choice == _AuthChoice.cancel) return;
+
+      // navigate to roles/login/register depending on choice
+      if (choice == _AuthChoice.login) {
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+      } else {
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
+      }
+
+      // re-check token
+      await _checkAuthStatus();
+      token = await AuthService.getToken();
+      if (token == null || token.isEmpty) return;
+    }
+
+    // Now user is logged in – open registration screen and await result
+    final result = await Navigator.pushNamed(context, '/competitions/register', arguments: {
+      'competitionId': competition['id'],
+      'competitionTitle': competition['title'],
+    });
+
+    // result must be a Map: {'registered': true} on success
+    if (result is Map && result['registered'] == true) {
+      // optimistic local update
+      _setRegistered(competition['id']);
+
+      // Optional: trigger background sync to reconcile with backend (recommended)
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) _fetchCompetitions(forceRefresh: true);
+      });
+
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Successfully registered for competition!'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade800,
+        ),
+      );
+    }
+  }
+
+  Future<void> _onTapSubmit(Map<String, dynamic> competition) async {
+    // ensure user logged in
+    String? token = await AuthService.getToken();
+    if (token == null || token.isEmpty) {
+      final choice = await showDialog<_AuthChoice>(
+        context: context,
+        barrierDismissible: false,
+        builder: (ctx) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF07101A),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            title: Row(
+              children: const [
+                Icon(Icons.login, color: Colors.white70, size: 24),
+                SizedBox(width: 8),
+                Text('Login Required', style: TextStyle(color: Colors.white)),
+              ],
+            ),
+            content: const Text(
+              'You must be logged in to submit your project. Would you like to login or create a new account?',
+              style: TextStyle(color: Colors.white70),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel),
+                child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+              ),
+              TextButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register),
+                icon: const Icon(Icons.person_add, size: 18, color: Colors.white70),
+                label: const Text('Register', style: TextStyle(color: Colors.white70)),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.02),
+                  foregroundColor: Colors.white70,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+              TextButton.icon(
+                onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login),
+                icon: const Icon(Icons.login, size: 18, color: Colors.white),
+                label: const Text('Login', style: TextStyle(color: Colors.white)),
+                style: TextButton.styleFrom(
+                  backgroundColor: Colors.white.withOpacity(0.06),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          );
+        },
+      );
+
+      if (choice == null || choice == _AuthChoice.cancel) return;
+
+      if (choice == _AuthChoice.login) {
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
+      } else {
+        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register'});
+      }
+
+      await _checkAuthStatus();
+      token = await AuthService.getToken();
+      if (token == null || token.isEmpty) return;
+    }
+
+    // Open submission screen and await result
+    final result = await Navigator.pushNamed(context, '/competitions/submit', arguments: {
+      'competitionId': competition['id'],
+      'competitionTitle': competition['title'],
+    });
+
+    if (result is Map && result['submitted'] == true) {
+      // optimistic local update
+      _setSubmitted(competition['id']);
+
+      // Also trigger background sync to reconcile with backend (recommended)
+      Future.delayed(const Duration(milliseconds: 800), () {
+        if (mounted) _fetchCompetitions(forceRefresh: true);
+      });
+
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.cloud_upload, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Project submitted successfully!'),
+            ],
+          ),
+          backgroundColor: Colors.green.shade800,
+        ),
+      );
+    }
+  }
+
+  // ---------------------------
+  // rest of the original code (UI rendering)
   // ---------------------------
 
   Color _statusColor(String status) {
     switch (status) {
       case 'ongoing':
-        return Colors.greenAccent.shade700;
+        return Colors.green.shade600;
       case 'upcoming':
-        return Colors.amberAccent.shade700;
+        return Colors.amber.shade600;
       case 'completed':
       default:
         return Colors.grey.shade500;
@@ -287,67 +525,49 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
   String _statusLabel(String status) {
     switch (status) {
       case 'ongoing':
-        return 'Ongoing';
+        return 'Live';
       case 'upcoming':
-        return 'Upcoming';
+        return 'Soon';
       case 'completed':
       default:
-        return 'Completed';
+        return 'Done';
     }
   }
 
-  Future<void> _onTapRegister(Map<String, dynamic> competition) async {
-    final token = await AuthService.getToken();
-    if (token == null || token.isEmpty) {
-      final choice = await showDialog<_AuthChoice>(
-        context: context,
-        barrierDismissible: false,
-        builder: (ctx) {
-          return AlertDialog(
-            backgroundColor: const Color(0xFF07101A),
-            title: const Text('Login required', style: TextStyle(color: Colors.white)),
-            content: const Text('You must be logged in to register for competitions. Login or register now?', style: TextStyle(color: Colors.white70)),
-            actions: [
-              TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel), child: const Text('Cancel')),
-              TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register), child: const Text('Register')),
-              ElevatedButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login), child: const Text('Login')),
-            ],
-          );
-        },
-      );
-
-      if (choice == _AuthChoice.login) {
-        // wait for login flow to complete
-        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
-        await _checkAuthStatus();
-        final tokenAfter = await AuthService.getToken();
-        if (tokenAfter != null && tokenAfter.isNotEmpty) {
-          Navigator.pushNamed(context, '/competitions/register', arguments: {
-            'competitionId': competition['id'],
-            'competitionTitle': competition['title'],
-          });
-        }
-      } else if (choice == _AuthChoice.register) {
-        await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
-        await _checkAuthStatus();
-        final tokenAfter = await AuthService.getToken();
-        if (tokenAfter != null && tokenAfter.isNotEmpty) {
-          Navigator.pushNamed(context, '/competitions/register', arguments: {
-            'competitionId': competition['id'],
-            'competitionTitle': competition['title'],
-          });
-        }
-      }
-      return;
+  IconData _statusIcon(String status) {
+    switch (status) {
+      case 'ongoing':
+        return Icons.play_circle_fill;
+      case 'upcoming':
+        return Icons.schedule;
+      case 'completed':
+      default:
+        return Icons.check_circle;
     }
+  }
 
-    Navigator.pushNamed(
-      context,
-      '/competitions/register',
-      arguments: {
-        'competitionId': competition['id'],
-        'competitionTitle': competition['title'],
-      },
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      // Let the gradient show behind the AppBar
+      extendBodyBehindAppBar: true,
+      backgroundColor: Colors.transparent,
+      appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
+      body: Container(
+        decoration: const BoxDecoration(gradient: AppTheme.gradient),
+        child: SafeArea(
+          child: Column(
+            children: [
+              const SizedBox(height: 12),
+              _filtersRow(),
+              _searchBar(),
+              if (_loading) const LinearProgressIndicator(minHeight: 3),
+              // expanded inner list (transparent)
+              Expanded(child: _buildListInner()),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -378,7 +598,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
                 child: Image.asset(
                   'assets/logo.png',
                   fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white),
+                  errorBuilder: (_, __, ___) => const Icon(Icons.emoji_events, color: Colors.white),
                 ),
               ),
             ),
@@ -389,9 +609,15 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
               child: Container(
                 padding: const EdgeInsets.only(left: 4),
                 alignment: Alignment.centerLeft,
-                child: const Text(
-                  'Competitions',
-                  style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
+                child: Row(
+                  children: const [
+                    Icon(Icons.emoji_events, size: 16, color: Colors.white70),
+                    SizedBox(width: 4),
+                    Text(
+                      'Competitions',
+                      style: TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.w500),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -457,15 +683,16 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
             else
               Row(
                 children: [
-                  TextButton(
+                  TextButton.icon(
                     onPressed: () async {
                       await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'login'});
                       await _checkAuthStatus();
                     },
-                    child: const Text('Login', style: TextStyle(color: Colors.white)),
+                    icon: const Icon(Icons.login, size: 16, color: Colors.white),
+                    label: const Text('Login', style: TextStyle(color: Colors.white)),
                   ),
                   const SizedBox(width: 8),
-                  OutlinedButton(
+                  OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       side: BorderSide(color: Colors.white.withOpacity(0.12)),
                       foregroundColor: Colors.white,
@@ -477,7 +704,8 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
                       await Navigator.pushNamed(context, '/roles', arguments: {'mode': 'register', 'showRoleTopRight': true});
                       await _checkAuthStatus();
                     },
-                    child: const Text('Register'),
+                    icon: const Icon(Icons.person_add, size: 16),
+                    label: const Text('Register'),
                   ),
                 ],
               ),
@@ -495,7 +723,8 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
           _MetricButton(
             label: 'Ongoing',
             count: ongoingCount,
-            color: Colors.greenAccent,
+            icon: Icons.play_circle_fill,
+            color: Colors.green,
             selected: _activeFilter == CompetitionFilter.ongoing,
             onTap: () {
               setState(() => _activeFilter = CompetitionFilter.ongoing);
@@ -506,6 +735,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
           _MetricButton(
             label: 'Upcoming',
             count: upcomingCount,
+            icon: Icons.schedule,
             color: Colors.amber,
             selected: _activeFilter == CompetitionFilter.upcoming,
             onTap: () {
@@ -517,6 +747,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
           _MetricButton(
             label: 'Completed',
             count: completedCount,
+            icon: Icons.check_circle,
             color: Colors.grey,
             selected: _activeFilter == CompetitionFilter.completed,
             onTap: () {
@@ -563,7 +794,7 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
                   _fetchCompetitions();
                   setState(() {});
                 },
-                child: Icon(Icons.close, color: Colors.white.withOpacity(0.6)),
+                child: Icon(Icons.clear, color: Colors.white.withOpacity(0.6)),
               )
           ],
         ),
@@ -580,15 +811,42 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
     if (_error != null) {
       return Center(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          Text(_error!, style: const TextStyle(color: Colors.white70)),
+          Icon(Icons.error_outline, size: 48, color: Colors.red.shade400),
           const SizedBox(height: 12),
-          ElevatedButton(onPressed: _fetchCompetitions, child: const Text('Retry'))
+          Text(_error!, style: const TextStyle(color: Colors.white70), textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          ElevatedButton.icon(
+            onPressed: _fetchCompetitions,
+            icon: const Icon(Icons.refresh),
+            label: const Text('Retry'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.amber.shade700,
+              foregroundColor: Colors.black,
+            ),
+          ),
         ]),
       );
     }
 
     if (_competitions.isEmpty) {
-      return Center(child: Text('No competitions found', style: TextStyle(color: Colors.white70)));
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.search_off, size: 64, color: Colors.white.withOpacity(0.3)),
+            const SizedBox(height: 16),
+            Text(
+              'No competitions found',
+              style: TextStyle(color: Colors.white70, fontSize: 18),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Try adjusting your search or filter criteria',
+              style: TextStyle(color: Colors.white.withOpacity(0.5)),
+            ),
+          ],
+        ),
+      );
     }
 
     return RefreshIndicator(
@@ -670,35 +928,14 @@ class _CompetitionScreenState extends State<CompetitionScreen> with WidgetsBindi
               eligibility: c['eligibility_criteria'],
               contact: c['contact_info'],
               onRegister: () => _onTapRegister(c),
+              onSubmit: () => _onTapSubmit(c),
+              userRegistered: c['user_registered'] == true,
+              userSubmitted: c['user_submitted'] == true,
               statusColor: _statusColor(status),
               statusLabel: _statusLabel(status),
+              statusIcon: _statusIcon(status),
             );
           },
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      // Let the gradient show behind the AppBar
-      extendBodyBehindAppBar: true,
-      backgroundColor: Colors.transparent,
-      appBar: PreferredSize(preferredSize: const Size.fromHeight(kToolbarHeight), child: _topHeader()),
-      body: Container(
-        decoration: const BoxDecoration(gradient: AppTheme.gradient),
-        child: SafeArea(
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              _filtersRow(),
-              _searchBar(),
-              if (_loading) const LinearProgressIndicator(minHeight: 3),
-              // expanded inner list (transparent)
-              Expanded(child: _buildListInner()),
-            ],
-          ),
         ),
       ),
     );
@@ -710,6 +947,7 @@ enum _AuthChoice { cancel, login, register }
 class _MetricButton extends StatelessWidget {
   final String label;
   final int count;
+  final IconData icon;
   final Color color;
   final bool selected;
   final VoidCallback? onTap;
@@ -717,6 +955,7 @@ class _MetricButton extends StatelessWidget {
   const _MetricButton({
     required this.label,
     required this.count,
+    required this.icon,
     required this.color,
     this.onTap,
     this.selected = false,
@@ -725,19 +964,41 @@ class _MetricButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // subtle gradient using the base color with low opacity to avoid bright visuals
+    final gradient = LinearGradient(
+      begin: Alignment.topLeft,
+      end: Alignment.bottomRight,
+      colors: [
+        color.withOpacity(selected ? 0.14 : 0.08),
+        color.withOpacity(selected ? 0.06 : 0.03),
+      ],
+    );
+
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
-          color: selected ? Colors.white.withOpacity(0.06) : Colors.white.withOpacity(0.03),
+          gradient: gradient,
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? Colors.white.withOpacity(0.08) : Colors.transparent),
+          border: Border.all(color: selected ? Colors.white.withOpacity(0.06) : Colors.transparent),
         ),
         child: Row(
           children: [
-            CircleAvatar(radius: 14, backgroundColor: color.withOpacity(0.12), child: Icon(Icons.timeline, color: color, size: 18)),
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                // Subtle circular gradient for the icon container too
+                gradient: LinearGradient(
+                  colors: [color.withOpacity(0.12), color.withOpacity(0.06)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                ),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: color.withOpacity(0.85), size: 16),
+            ),
             const SizedBox(width: 8),
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(count.toString(), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
@@ -771,8 +1032,12 @@ class _CompetitionCard extends StatefulWidget {
   final dynamic eligibility;
   final dynamic contact;
   final VoidCallback? onRegister;
+  final VoidCallback? onSubmit;
+  final bool userRegistered;
+  final bool userSubmitted;
   final Color statusColor;
   final String statusLabel;
+  final IconData statusIcon;
 
   const _CompetitionCard({
     required this.title,
@@ -794,8 +1059,12 @@ class _CompetitionCard extends StatefulWidget {
     this.eligibility,
     this.contact,
     this.onRegister,
+    this.onSubmit,
+    this.userRegistered = false,
+    this.userSubmitted = false,
     required this.statusColor,
     required this.statusLabel,
+    required this.statusIcon,
     super.key,
   });
 
@@ -812,7 +1081,7 @@ class _CompetitionCardState extends State<_CompetitionCard> {
     final corner = BorderRadius.circular(14);
     final ddFmt = DateFormat('d MMM yyyy, hh:mm a');
 
-    Widget _pill(String text) {
+    Widget _pill(String text, {IconData? icon}) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
         decoration: BoxDecoration(
@@ -820,7 +1089,16 @@ class _CompetitionCardState extends State<_CompetitionCard> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: Colors.white.withOpacity(0.01)),
         ),
-        child: Text(text, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (icon != null) ...[
+              Icon(icon, size: 14, color: Colors.white70),
+              const SizedBox(width: 4),
+            ],
+            Text(text, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+          ],
+        ),
       );
     }
 
@@ -836,8 +1114,15 @@ class _CompetitionCardState extends State<_CompetitionCard> {
               height: 78,
               decoration: BoxDecoration(color: Colors.white.withOpacity(0.04), borderRadius: BorderRadius.circular(10)),
               child: widget.bannerUrl != null
-                  ? ClipRRect(borderRadius: BorderRadius.circular(10), child: Image.network(widget.bannerUrl!, fit: BoxFit.cover, errorBuilder: (_, __, ___) => const Icon(Icons.emoji_objects_outlined, color: Colors.white70)))
-                  : const Icon(Icons.emoji_objects_outlined, color: Colors.white70),
+                  ? ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: Image.network(
+                  widget.bannerUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Icon(Icons.emoji_events, color: Colors.white70, size: 32),
+                ),
+              )
+                  : const Icon(Icons.emoji_events, color: Colors.white70, size: 32),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -847,7 +1132,14 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(color: widget.statusColor.withOpacity(0.12), borderRadius: BorderRadius.circular(20)),
-                    child: Text(widget.statusLabel, style: TextStyle(color: widget.statusColor, fontWeight: FontWeight.bold)),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(widget.statusIcon, size: 12, color: widget.statusColor),
+                        const SizedBox(width: 4),
+                        Text(widget.statusLabel, style: TextStyle(color: widget.statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                      ],
+                    ),
                   ),
                 ]),
                 const SizedBox(height: 6),
@@ -855,13 +1147,12 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                 const SizedBox(height: 8),
                 // Row of small pills: date, participants, seats etc
                 Wrap(spacing: 8, runSpacing: 6, children: [
-                  if (widget.start != null && widget.end != null)
-                    _pill('${df.format(widget.start!)} → ${df.format(widget.end!)}'),
-                  _pill('${widget.membersCount} participants'),
-                  _pill('${widget.seatsRemaining} seats left'),
-                  if (widget.totalSeats != null) _pill('Total seats: ${widget.totalSeats}'),
-                  if (widget.maxTeamSize != null) _pill('Max team: ${widget.maxTeamSize}'),
-                  if (widget.contentSourceType != null && widget.contentSourceType!.isNotEmpty) _pill(widget.contentSourceType!),
+                  if (widget.start != null && widget.end != null) _pill('${df.format(widget.start!)} → ${df.format(widget.end!)}', icon: Icons.calendar_month),
+                  _pill('${widget.membersCount} participants', icon: Icons.group),
+                  _pill('${widget.seatsRemaining} seats left', icon: Icons.event_seat),
+                  if (widget.totalSeats != null) _pill('Total: ${widget.totalSeats}', icon: Icons.event_available),
+                  if (widget.maxTeamSize != null) _pill('Team: ${widget.maxTeamSize}', icon: Icons.people),
+                  if (widget.contentSourceType != null && widget.contentSourceType!.isNotEmpty) _pill(widget.contentSourceType!, icon: Icons.source),
                 ]),
                 const SizedBox(height: 8),
                 // Tags as small dark pills
@@ -869,16 +1160,25 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                   spacing: 8,
                   runSpacing: 6,
                   children: widget.tags.map((t) {
-                    final txt = t.trim();
+                    // remove leading '#' and trim whitespace, preserve inner punctuation/casing
+                    var txt = t.toString().trim();
+                    if (txt.startsWith('#')) txt = txt.substring(1).trim();
                     if (txt.isEmpty) return const SizedBox.shrink();
                     return Container(
                       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                       decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.02),
+                        color: Colors.blue.withOpacity(0.08),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: Colors.white.withOpacity(0.01)),
+                        border: Border.all(color: Colors.blue.withOpacity(0.14)),
                       ),
-                      child: Text(txt, style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.tag, size: 12, color: Colors.blue.shade300),
+                          const SizedBox(width: 4),
+                          Text(txt, style: TextStyle(color: Colors.blue.shade300, fontSize: 12)),
+                        ],
+                      ),
                     );
                   }).toList(),
                 ),
@@ -907,7 +1207,7 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                             CircleAvatar(
                               radius: 14,
                               backgroundColor: Colors.white.withOpacity(0.06),
-                              child: Text(widget.postedByName.isNotEmpty ? widget.postedByName[0].toUpperCase() : 'U'),
+                              child: Icon(Icons.person, size: 16, color: Colors.white70),
                             ),
                             const SizedBox(width: 8),
                             Text('Posted by ${widget.postedByName.isNotEmpty ? widget.postedByName : 'Unknown'}', style: const TextStyle(color: Colors.white70)),
@@ -915,24 +1215,145 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                         ),
                         Row(
                           children: [
-                            // --- Conditional action based on status ---
+                            // --- Enhanced Conditional action based on status and user flags ---
                             if (widget.status == 'upcoming') ...[
-                              TextButton(
+                              widget.userRegistered
+                                  ? Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.check_circle, size: 16, color: Colors.green),
+                                    SizedBox(width: 4),
+                                    Text('Registered', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              )
+                                  : TextButton.icon(
                                 onPressed: widget.onRegister,
-                                child: const Text('Register', style: TextStyle(color: Colors.white70)),
+                                icon: const Icon(Icons.how_to_reg, size: 16, color: Colors.white70),
+                                label: const Text('Register', style: TextStyle(color: Colors.white70)),
+                                style: TextButton.styleFrom(
+                                  backgroundColor: Colors.white.withOpacity(0.02),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
                               ),
                             ] else if (widget.status == 'ongoing') ...[
-                              TextButton(
-                                onPressed: () {
-                                  // Navigate to submission flow
-                                  Navigator.pushNamed(context, '/competitions/submit', arguments: {
-                                    'competitionTitle': widget.title,
-                                  });
-                                },
-                                child: const Text('Submit', style: TextStyle(color: Colors.white70)),
+                              widget.userSubmitted
+                                  ? Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.blue.withOpacity(0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: Colors.blue.withOpacity(0.3)),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: const [
+                                    Icon(Icons.cloud_done, size: 16, color: Colors.blue),
+                                    SizedBox(width: 4),
+                                    Text('Submitted', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                              )
+                                  : TextButton.icon(
+                                onPressed: widget.onSubmit,
+                                icon: const Icon(Icons.upload_file, size: 16, color: Colors.white70),
+                                label: const Text('Submit', style: TextStyle(color: Colors.white70)),
+                                style: TextButton.styleFrom(
+                                  backgroundColor: Colors.white.withOpacity(0.02),
+                                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                ),
                               ),
                             ] else if (widget.status == 'completed') ...[
-                              const Text('Completed', style: TextStyle(color: Colors.white54, fontWeight: FontWeight.w500)),
+                              if (widget.userRegistered && widget.userSubmitted) ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.green.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.green.withOpacity(0.3)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: const [
+                                      Icon(Icons.check_circle, size: 16, color: Colors.green),
+                                      SizedBox(width: 4),
+                                      Text('Submitted', style: TextStyle(color: Colors.green, fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(widget.statusIcon, size: 14, color: widget.statusColor),
+                                      const SizedBox(width: 4),
+                                      Text('Completed', style: TextStyle(color: widget.statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                              ] else if (widget.userRegistered && !widget.userSubmitted) ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                                  decoration: BoxDecoration(
+                                    color: Colors.orange.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.orange.withOpacity(0.3)),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: const [
+                                      Icon(Icons.warning, size: 16, color: Colors.orange),
+                                      SizedBox(width: 4),
+                                      Text('Not Submitted', style: TextStyle(color: Colors.orange, fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(widget.statusIcon, size: 14, color: widget.statusColor),
+                                      const SizedBox(width: 4),
+                                      Text('Completed', style: TextStyle(color: widget.statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                              ] else ...[
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  decoration: BoxDecoration(
+                                    color: Colors.grey.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(widget.statusIcon, size: 14, color: widget.statusColor),
+                                      const SizedBox(width: 4),
+                                      Text('Completed', style: TextStyle(color: widget.statusColor, fontWeight: FontWeight.bold, fontSize: 12)),
+                                    ],
+                                  ),
+                                ),
+                              ]
                             ],
                             const SizedBox(width: 6),
                             Icon(_expanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, color: Colors.white70),
@@ -949,40 +1370,86 @@ class _CompetitionCardState extends State<_CompetitionCard> {
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                       // Sponsor
                       if ((widget.sponsor ?? '').toString().isNotEmpty) ...[
-                        Text('Sponsor: ${widget.sponsor}', style: const TextStyle(color: Colors.white70)),
+                        Row(
+                          children: [
+                            const Icon(Icons.business, size: 16, color: Colors.white70),
+                            const SizedBox(width: 8),
+                            Text('Sponsor: ${widget.sponsor}', style: const TextStyle(color: Colors.white70)),
+                          ],
+                        ),
                         const SizedBox(height: 8),
                       ],
                       // Registration deadline
                       if (widget.registrationDeadline != null) ...[
-                        Text('Registration deadline: ${ddFmt.format(widget.registrationDeadline!)}', style: const TextStyle(color: Colors.white70)),
+                        Row(
+                          children: [
+                            const Icon(Icons.schedule, size: 16, color: Colors.white70),
+                            const SizedBox(width: 8),
+                            Text('Registration deadline: ${ddFmt.format(widget.registrationDeadline!)}', style: const TextStyle(color: Colors.white70)),
+                          ],
+                        ),
                         const SizedBox(height: 8),
                       ],
                       // Max team size / total seats
                       if (widget.maxTeamSize != null || widget.totalSeats != null) ...[
                         Row(children: [
-                          if (widget.maxTeamSize != null) Text('Max team size: ${widget.maxTeamSize}', style: const TextStyle(color: Colors.white70)),
+                          if (widget.maxTeamSize != null) ...[
+                            const Icon(Icons.people, size: 16, color: Colors.white70),
+                            const SizedBox(width: 4),
+                            Text('Max team size: ${widget.maxTeamSize}', style: const TextStyle(color: Colors.white70)),
+                          ],
                           if (widget.maxTeamSize != null && widget.totalSeats != null) const SizedBox(width: 16),
-                          if (widget.totalSeats != null) Text('Total seats: ${widget.totalSeats}', style: const TextStyle(color: Colors.white70)),
+                          if (widget.totalSeats != null) ...[
+                            const Icon(Icons.event_seat, size: 16, color: Colors.white70),
+                            const SizedBox(width: 4),
+                            Text('Total seats: ${widget.totalSeats}', style: const TextStyle(color: Colors.white70)),
+                          ],
                         ]),
                         const SizedBox(height: 8),
                       ],
                       // Rules
                       if (widget.rules != null) ...[
-                        const Text('Rules:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.rule, size: 16, color: Colors.white70),
+                            const SizedBox(width: 8),
+                            const Text('Rules:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
                         const SizedBox(height: 6),
-                        Text(widget.rules.toString(), style: const TextStyle(color: Colors.white70)),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 24),
+                          child: Text(widget.rules.toString(), style: const TextStyle(color: Colors.white70)),
+                        ),
                         const SizedBox(height: 8),
                       ],
                       // Eligibility
                       if (widget.eligibility != null) ...[
-                        const Text('Eligibility:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Icon(Icons.verified_user, size: 16, color: Colors.white70),
+                            const SizedBox(width: 8),
+                            const Text('Eligibility:', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                          ],
+                        ),
                         const SizedBox(height: 6),
-                        Text(widget.eligibility.toString(), style: const TextStyle(color: Colors.white70)),
+                        Padding(
+                          padding: const EdgeInsets.only(left: 24),
+                          child: Text(widget.eligibility.toString(), style: const TextStyle(color: Colors.white70)),
+                        ),
                         const SizedBox(height: 8),
                       ],
                       // Contact
                       if (widget.contact != null) ...[
-                        Text('Contact: ${_contactToString(widget.contact)}', style: const TextStyle(color: Colors.white70)),
+                        Row(
+                          children: [
+                            const Icon(Icons.contact_mail, size: 16, color: Colors.white70),
+                            const SizedBox(width: 8),
+                            Text('Contact: ${_contactToString(widget.contact)}', style: const TextStyle(color: Colors.white70)),
+                          ],
+                        ),
                       ]
                     ]),
                   )

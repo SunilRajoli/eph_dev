@@ -184,12 +184,55 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
       builder: (ctx) {
         return AlertDialog(
           backgroundColor: const Color(0xFF07101A),
-          title: const Text('Login required', style: TextStyle(color: Colors.white)),
-          content: const Text('You must be logged in to register. Login or register now?', style: TextStyle(color: Colors.white70)),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          title: Row(
+            children: const [
+              Icon(Icons.login, color: Colors.white70, size: 24),
+              SizedBox(width: 8),
+              Text('Login Required', style: TextStyle(color: Colors.white)),
+            ],
+          ),
+          content: const Text(
+              'You must be logged in to register. Would you like to login or create a new account?',
+              style: TextStyle(color: Colors.white70)
+          ),
           actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register), child: const Text('Register')),
-            ElevatedButton(onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login), child: const Text('Login')),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(_AuthChoice.cancel),
+              child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(_AuthChoice.register),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.person_add, size: 18, color: Colors.white70),
+                  SizedBox(width: 4),
+                  Text('Register', style: TextStyle(color: Colors.white70)),
+                ],
+              ),
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white.withOpacity(0.02),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(_AuthChoice.login),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.login, size: 18, color: Colors.white),
+                  SizedBox(width: 4),
+                  Text('Login', style: TextStyle(color: Colors.white)),
+                ],
+              ),
+              style: TextButton.styleFrom(
+                backgroundColor: Colors.white.withOpacity(0.06),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              ),
+            ),
           ],
         );
       },
@@ -219,18 +262,51 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
     final email = memberEmailCtrl.text.trim();
     final err = _validateEmailField(email);
     if (err != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(err),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
       return;
     }
     // check duplicates
     if (_memberEmails.contains(email)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Email already added')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.warning, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Email already added'),
+            ],
+          ),
+          backgroundColor: Colors.orange.shade800,
+        ),
+      );
       return;
     }
     // check against max team size (leader + members)
     final newSize = 1 + _memberEmails.length + 1; // leader + existing + new
     if (newSize > _maxTeamSize) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Max team size is $_maxTeamSize')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.people, color: Colors.white),
+              const SizedBox(width: 8),
+              Text('Max team size is $_maxTeamSize'),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
       return;
     }
 
@@ -256,13 +332,35 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
 
     // extra validations
     if (_type == _RegType.team && (teamNameCtrl.text.trim().isEmpty)) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Team name is required for team registration')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.group, color: Colors.white),
+              SizedBox(width: 8),
+              Text('Team name is required for team registration'),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
       return;
     }
 
     // check seats
     if (_seatsRemaining <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No seats remaining for this competition')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: const [
+              Icon(Icons.event_seat, color: Colors.white),
+              SizedBox(width: 8),
+              Text('No seats remaining for this competition'),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
       return;
     }
 
@@ -281,11 +379,26 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
       final res = await ApiService.registerForCompetition(competitionId, payload);
 
       if (res is Map<String, dynamic> && res['success'] == true) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Registration submitted')));
-        if (mounted) {
-          // go back to competitions list (or to registrations if you prefer)
-          Navigator.pushNamedAndRemoveUntil(context, '/competitions', (route) => false);
-        }
+        // Optimistically reduce seats locally (UI only). Parent screen will refresh from server.
+        setState(() {
+          if (_seatsRemaining > 0) _seatsRemaining = _seatsRemaining - 1;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Row(
+              children: const [
+                Icon(Icons.check_circle, color: Colors.white),
+                SizedBox(width: 8),
+                Text('Registration submitted successfully!'),
+              ],
+            ),
+            backgroundColor: Colors.green.shade800,
+          ),
+        );
+
+        // Pop with success so parent screen can mark 'registered' flag
+        if (mounted) Navigator.pop(context, {'registered': true});
         return;
       }
 
@@ -297,13 +410,35 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
       setState(() {
         _error = msg;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(msg),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
     } catch (e) {
       final msg = 'Network error: ${e.toString()}';
       setState(() {
         _error = msg;
       });
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.wifi_off, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(msg),
+            ],
+          ),
+          backgroundColor: Colors.red.shade800,
+        ),
+      );
     } finally {
       if (mounted) setState(() => _submitting = false);
     }
@@ -321,13 +456,24 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
             child: Image.asset(
               'assets/logo.png',
               fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => const Icon(Icons.engineering, color: Colors.white),
+              errorBuilder: (_, __, ___) => const Icon(Icons.how_to_reg, color: Colors.white),
             ),
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Text(title, style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700)),
+          child: Row(
+            children: [
+              // Removed the duplicate icon here to avoid showing two icons next to the title.
+              Expanded(
+                child: Text(
+                  title,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+            ],
+          ),
         ),
         IconButton(
           icon: const Icon(Icons.close, color: Colors.white70),
@@ -341,6 +487,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
   /// unwanted white fill on dark translucent backgrounds.
   Widget _optionPill({
     required String label,
+    required IconData icon,
     required bool selected,
     required VoidCallback onTap,
     EdgeInsets padding = const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -355,15 +502,21 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: selected ? Colors.white.withOpacity(0.08) : Colors.transparent),
         ),
-        child: Text(label, style: const TextStyle(color: Colors.white)),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Colors.white70),
+            const SizedBox(width: 8),
+            Text(label, style: const TextStyle(color: Colors.white70)),
+          ],
+        ),
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final width = MediaQuery.of(context).size.width * 0.96;
-
+    // Use full width so gradient covers entire screen and there are no black margins.
     return Scaffold(
       extendBodyBehindAppBar: true,
       backgroundColor: Colors.transparent,
@@ -375,6 +528,8 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
         leading: Container(),
       ),
       body: Container(
+        width: double.infinity,
+        height: double.infinity,
         decoration: const BoxDecoration(gradient: AppTheme.gradient),
         child: SafeArea(
           child: _loading
@@ -387,7 +542,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                 children: [
                   // Top translucent card (same style as competitions top header)
                   Container(
-                    width: width,
+                    width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.03),
@@ -401,20 +556,22 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                   // If error show error + retry
                   if (_error != null) ...[
                     Container(
-                      width: width,
+                      width: double.infinity,
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: Colors.red.shade900.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: Colors.red.withOpacity(0.2)),
                       ),
                       child: Row(
                         children: [
                           const Icon(Icons.error_outline, color: Colors.redAccent),
                           const SizedBox(width: 8),
                           Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
-                          TextButton(
+                          TextButton.icon(
                             onPressed: _loadCompetition,
-                            child: const Text('Retry', style: TextStyle(color: Colors.white70)),
+                            icon: const Icon(Icons.refresh, size: 16, color: Colors.white70),
+                            label: const Text('Retry', style: TextStyle(color: Colors.white70)),
                           )
                         ],
                       ),
@@ -424,7 +581,7 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
 
                   // Main translucent card with details + form
                   Container(
-                    width: width,
+                    width: double.infinity,
                     padding: const EdgeInsets.all(14),
                     decoration: BoxDecoration(
                       color: Colors.white.withOpacity(0.03),
@@ -435,9 +592,19 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         if (_competition != null) ...[
-                          Text(
-                            _competition!['description']?.toString() ?? '',
-                            style: const TextStyle(color: Colors.white70),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              // use neutral icon color to match UI
+                              const Icon(Icons.info_outline, color: Colors.white70, size: 20),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _competition!['description']?.toString() ?? '',
+                                  style: const TextStyle(color: Colors.white70),
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 8),
                           Wrap(spacing: 8, runSpacing: 6, children: [
@@ -449,11 +616,19 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                   borderRadius: BorderRadius.circular(10),
                                   border: Border.all(color: Colors.white.withOpacity(0.01)),
                                 ),
-                                child: Text(
-                                  '${DateFormat('d MMM').format(DateTime.parse(_competition!['start_date']))} → ${DateFormat('d MMM').format(DateTime.parse(_competition!['end_date']))}',
-                                  style: const TextStyle(color: Colors.white70),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(Icons.calendar_month, size: 14, color: Colors.white70),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${DateFormat('d MMM').format(DateTime.parse(_competition!['start_date']))} → ${DateFormat('d MMM').format(DateTime.parse(_competition!['end_date']))}',
+                                      style: const TextStyle(color: Colors.white70),
+                                    ),
+                                  ],
                                 ),
                               ),
+                            // Seats pill: make translucent (no bright green/red)
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
@@ -461,8 +636,16 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(color: Colors.white.withOpacity(0.01)),
                               ),
-                              child: Text('Seats: $_seatsRemaining', style: const TextStyle(color: Colors.white70)),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(Icons.event_seat, size: 14, color: Colors.white70),
+                                  const SizedBox(width: 4),
+                                  Text('Seats: $_seatsRemaining', style: const TextStyle(color: Colors.white70)),
+                                ],
+                              ),
                             ),
+                            // Team limit pill: translucent
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                               decoration: BoxDecoration(
@@ -470,10 +653,22 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(color: Colors.white.withOpacity(0.01)),
                               ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: const [
+                                  Icon(Icons.people, size: 14, color: Colors.white70),
+                                  SizedBox(width: 4),
+                                  // Text below uses string interpolation because _maxTeamSize is variable
+                                ],
+                              ),
+                            ),
+                            // team limit text rendered separately to allow interpolation
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
                               child: Text('Team limit: $_maxTeamSize', style: const TextStyle(color: Colors.white70)),
                             ),
                           ]),
-                          const SizedBox(height: 12),
+                          const SizedBox(height: 16),
                         ],
 
                         Form(
@@ -481,18 +676,26 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              const Text('Registration type', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                              Row(
+                                children: [
+                                  const Icon(Icons.person_outline, size: 20, color: Colors.white70),
+                                  const SizedBox(width: 8),
+                                  const Text('Registration Type', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                                ],
+                              ),
                               const SizedBox(height: 8),
                               Row(
                                 children: [
                                   _optionPill(
                                     label: 'Individual',
+                                    icon: Icons.person,
                                     selected: _type == _RegType.individual,
                                     onTap: () => setState(() => _type = _RegType.individual),
                                   ),
                                   const SizedBox(width: 8),
                                   _optionPill(
                                     label: 'Team',
+                                    icon: Icons.group,
                                     selected: _type == _RegType.team,
                                     onTap: () => setState(() => _type = _RegType.team),
                                   ),
@@ -511,12 +714,15 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                     return null;
                                   },
                                   decoration: InputDecoration(
-                                    hintText: 'Team name',
+                                    hintText: 'Enter your team name',
                                     hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
                                     filled: true,
                                     fillColor: Colors.white.withOpacity(0.02),
                                     prefixIcon: const Icon(Icons.group, color: Colors.white70),
-                                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                    border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(12),
+                                        borderSide: BorderSide.none
+                                    ),
                                   ),
                                 ),
                                 const SizedBox(height: 10),
@@ -524,86 +730,154 @@ class _CompetitionRegisterScreenState extends State<CompetitionRegisterScreen> {
                                 // add member emails
                                 Row(
                                   children: [
+                                    const Icon(Icons.person_add, size: 16, color: Colors.white70),
+                                    const SizedBox(width: 6),
+                                    const Text('Team Members', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                Row(
+                                  children: [
                                     Expanded(
                                       child: TextFormField(
                                         controller: memberEmailCtrl,
                                         style: const TextStyle(color: Colors.white),
                                         decoration: InputDecoration(
-                                          hintText: 'Add member email',
+                                          hintText: 'Add member email address',
                                           hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
                                           filled: true,
                                           fillColor: Colors.white.withOpacity(0.02),
                                           prefixIcon: const Icon(Icons.email_outlined, color: Colors.white70),
-                                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                          border: OutlineInputBorder(
+                                              borderRadius: BorderRadius.circular(12),
+                                              borderSide: BorderSide.none
+                                          ),
                                         ),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
-                                    ElevatedButton(
+                                    // make Add button translucent / subtle
+                                    TextButton.icon(
                                       onPressed: _addMemberEmail,
-                                      child: const Text('Add'),
-                                      style: ElevatedButton.styleFrom(
+                                      icon: const Icon(Icons.add, size: 16, color: Colors.white),
+                                      label: const Text('Add', style: TextStyle(color: Colors.white)),
+                                      style: TextButton.styleFrom(
                                         backgroundColor: Colors.white.withOpacity(0.06),
-                                        elevation: 0,
+                                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
                                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                                       ),
                                     )
                                   ],
                                 ),
                                 const SizedBox(height: 8),
-                                if (_memberEmails.isNotEmpty)
+                                if (_memberEmails.isNotEmpty) ...[
+                                  Row(
+                                    children: [
+                                      const Icon(Icons.people, size: 16, color: Colors.white70),
+                                      const SizedBox(width: 6),
+                                      Text('Team Members (${_memberEmails.length})', style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
                                   Wrap(
                                     spacing: 8,
                                     runSpacing: 6,
                                     children: List.generate(_memberEmails.length, (i) {
                                       final e = _memberEmails[i];
-                                      return Chip(
-                                        label: Text(e, style: const TextStyle(color: Colors.white70)),
-                                        backgroundColor: Colors.white.withOpacity(0.02),
-                                        onDeleted: () => _removeMemberEmail(i),
+                                      // use translucent pill instead of bright Chip
+                                      return Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                        decoration: BoxDecoration(
+                                          color: Colors.white.withOpacity(0.02),
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(color: Colors.white.withOpacity(0.01)),
+                                        ),
+                                        child: Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            const Icon(Icons.person, size: 16, color: Colors.white70),
+                                            const SizedBox(width: 8),
+                                            Text(e, style: const TextStyle(color: Colors.white70)),
+                                            const SizedBox(width: 8),
+                                            GestureDetector(
+                                              onTap: () => _removeMemberEmail(i),
+                                              child: const Icon(Icons.close, size: 16, color: Colors.white70),
+                                            )
+                                          ],
+                                        ),
                                       );
                                     }),
                                   ),
-                                const SizedBox(height: 12),
+                                  const SizedBox(height: 12),
+                                ],
                               ],
 
                               // abstract / description
+                              Row(
+                                children: [
+                                  const Icon(Icons.description_outlined, size: 20, color: Colors.white70),
+                                  const SizedBox(width: 8),
+                                  const Text('Project Abstract', style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w700)),
+                                  const SizedBox(width: 4),
+                                  const Text('(Optional)', style: TextStyle(color: Colors.white54, fontSize: 12)),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
                               TextFormField(
                                 controller: abstractCtrl,
                                 minLines: 3,
                                 maxLines: 6,
                                 style: const TextStyle(color: Colors.white),
                                 decoration: InputDecoration(
-                                  hintText: 'Project abstract / summary (optional)',
+                                  hintText: 'Describe your project idea, approach, or solution...',
                                   hintStyle: TextStyle(color: Colors.white.withOpacity(0.7)),
                                   filled: true,
                                   fillColor: Colors.white.withOpacity(0.02),
-                                  prefixIcon: const Icon(Icons.description_outlined, color: Colors.white70),
-                                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                  prefixIcon: const Padding(
+                                    padding: EdgeInsets.only(top: 12, left: 12),
+                                    child: Icon(Icons.edit_note, color: Colors.white70),
+                                  ),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(12),
+                                      borderSide: BorderSide.none
+                                  ),
                                 ),
                               ),
-                              const SizedBox(height: 12),
+                              const SizedBox(height: 16),
 
                               if (_error != null) ...[
                                 Container(
                                   width: double.infinity,
                                   padding: const EdgeInsets.all(10),
-                                  decoration: BoxDecoration(color: Colors.red.shade800.withOpacity(0.12), borderRadius: BorderRadius.circular(8)),
-                                  child: Text(_error!, style: const TextStyle(color: Colors.redAccent)),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red.shade800.withOpacity(0.12),
+                                    borderRadius: BorderRadius.circular(8),
+                                    border: Border.all(color: Colors.red.withOpacity(0.2)),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.error, color: Colors.redAccent, size: 20),
+                                      const SizedBox(width: 8),
+                                      Expanded(child: Text(_error!, style: const TextStyle(color: Colors.redAccent))),
+                                    ],
+                                  ),
                                 ),
                                 const SizedBox(height: 12),
                               ],
 
                               CustomButton(
-                                text: _submitting ? 'Submitting...' : 'Submit registration',
+                                text: _submitting ? 'Submitting Registration...' : 'Submit Registration',
                                 enabled: !_submitting,
                                 onPressed: _submitting ? null : _submitRegistration,
                               ),
                               const SizedBox(height: 8),
 
-                              TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: const Text('Cancel', style: TextStyle(color: Colors.white70)),
+                              Center(
+                                child: TextButton.icon(
+                                  onPressed: () => Navigator.pop(context),
+                                  icon: const Icon(Icons.arrow_back, size: 16, color: Colors.white70),
+                                  label: const Text('Back to Competition', style: TextStyle(color: Colors.white70)),
+                                ),
                               ),
                             ],
                           ),
